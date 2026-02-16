@@ -21,6 +21,12 @@
   "Format a local-time TIMESTAMP as an RFC 3339 string for SQLite storage."
   (local-time:format-timestring nil timestamp :format *rfc3339-format*))
 
+(defun format-timestamp-utc (timestamp)
+  "Format a local-time TIMESTAMP as an RFC 3339 string in UTC."
+  (local-time:format-timestring nil timestamp
+                                :format *rfc3339-format*
+                                :timezone local-time:+utc-zone+))
+
 (defun format-timestamp-or-null (timestamp)
   "Format TIMESTAMP as RFC 3339, or return NIL if TIMESTAMP is NIL."
   (when timestamp (format-timestamp timestamp)))

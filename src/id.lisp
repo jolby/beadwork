@@ -10,9 +10,10 @@
 ;;; See EXISTING_BEADS_STRUCTURE_AND_ARCHITECTURE.md §11 for the full spec.
 ;;; ============================================================================
 
-(define-constant +base36-alphabet+ "0123456789abcdefghijklmnopqrstuvwxyz")
+(define-constant +base36-alphabet+ "0123456789abcdefghijklmnopqrstuvwxyz" :test 'string=)
 
-(defconstant +default-hash-length+ 3
+(define-constant +default-hash-length+ 3
+  :documentation
   "Default number of base-36 characters for the hash portion of an ID.
 Matches br's min_hash_length default.")
 

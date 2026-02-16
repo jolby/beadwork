@@ -8,29 +8,6 @@
 ;;; ============================================================================
 
 ;;; ----------------------------------------------------------------------------
-;;; RFC 3339 timestamp helpers
-;;; ----------------------------------------------------------------------------
-
-(defparameter *rfc3339-format*
-  '((:year 4) #\- (:month 2) #\- (:day 2)
-    #\T (:hour 2) #\: (:min 2) #\: (:sec 2)
-    #\. (:nsec 9) #\Z)
-  "local-time format list for RFC 3339 with nanosecond precision (UTC).")
-
-(defun format-timestamp (timestamp)
-  "Format a local-time TIMESTAMP as an RFC 3339 string with nanosecond precision."
-  (when timestamp
-    (local-time:format-timestring nil timestamp
-                                  :format *rfc3339-format*
-                                  :timezone local-time:+utc-zone+)))
-
-(defun parse-timestamp (string)
-  "Parse an RFC 3339 timestamp STRING into a local-time:timestamp.
-Returns NIL for NIL or empty input."
-  (when (and string (plusp (length string)))
-    (local-time:parse-timestring string :fail-on-error nil)))
-
-;;; ----------------------------------------------------------------------------
 ;;; Omit-empty helper
 ;;; ----------------------------------------------------------------------------
 
@@ -51,7 +28,7 @@ Matches br's serde omitempty behavior."
     (setf (gethash "issue_id" ht) (dependency-issue-id dep))
     (setf (gethash "depends_on_id" ht) (dependency-depends-on-id dep))
     (setf (gethash "type" ht) (dependency-type-string (dependency-dep-type dep)))
-    (setf (gethash "created_at" ht) (format-timestamp (dependency-created-at dep)))
+    (setf (gethash "created_at" ht) (format-timestamp-utc (dependency-created-at dep)))
     (setf (gethash "created_by" ht) (or (dependency-created-by dep) ""))
     (setf (gethash "metadata" ht) (or (dependency-metadata dep) "{}"))
     (setf (gethash "thread_id" ht) (or (dependency-thread-id dep) ""))
@@ -68,8 +45,8 @@ Fields with nil/empty values are omitted (serde omitempty behavior)."
     (setf (gethash "status" ht) (status-string (issue-status issue)))
     (setf (gethash "priority" ht) (issue-priority issue))
     (setf (gethash "issue_type" ht) (issue-type-string (issue-type issue)))
-    (setf (gethash "created_at" ht) (format-timestamp (issue-created-at issue)))
-    (setf (gethash "updated_at" ht) (format-timestamp (issue-updated-at issue)))
+    (setf (gethash "created_at" ht) (format-timestamp-utc (issue-created-at issue)))
+    (setf (gethash "updated_at" ht) (format-timestamp-utc (issue-updated-at issue)))
     (setf (gethash "source_repo" ht) (or (issue-source-repo issue) "."))
     (setf (gethash "compaction_level" ht) 0)
     (setf (gethash "original_size" ht) 0)
@@ -89,7 +66,7 @@ Fields with nil/empty values are omitted (serde omitempty behavior)."
     (set-when-present ht "content_hash" (issue-content-hash issue))
 
     ;; Optional timestamp fields
-    (let ((closed-at (format-timestamp (issue-closed-at issue))))
+    (let ((closed-at (format-timestamp-utc (issue-closed-at issue))))
       (set-when-present ht "closed_at" closed-at))
 
     ;; Optional integer fields
@@ -283,10 +260,10 @@ created_at. Clears dirty flags after successful export."
     (issue-assignee issue)
     (issue-owner issue)
     (issue-estimated-minutes issue)
-    (format-timestamp (issue-created-at issue))
+    (format-timestamp-utc (issue-created-at issue))
     (issue-created-by issue)
-    (format-timestamp (issue-updated-at issue))
-    (format-timestamp (issue-closed-at issue))
+    (format-timestamp-utc (issue-updated-at issue))
+    (format-timestamp-utc (issue-closed-at issue))
     (issue-close-reason issue)
     (issue-source-repo issue)
     (issue-external-ref issue)))
@@ -300,7 +277,7 @@ created_at. Clears dirty flags after successful export."
     (dependency-issue-id dep)
     (dependency-depends-on-id dep)
     (dependency-type-string (dependency-dep-type dep))
-    (format-timestamp (dependency-created-at dep))
+    (format-timestamp-utc (dependency-created-at dep))
     (or (dependency-created-by dep) "")
     (or (dependency-metadata dep) "{}")
     (or (dependency-thread-id dep) "")))

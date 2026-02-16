@@ -2,7 +2,7 @@
 
 ;;; Schema DDL — matches beads_rust (br) exactly for .beads/beads.db interop.
 
-(defconstant +schema-version+ 1)
+(define-constant +schema-version+ 1)
 
 (defparameter *schema-statements*
   (list

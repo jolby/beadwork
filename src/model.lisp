@@ -39,11 +39,11 @@
 ;;; Priority
 ;;; ============================================================================
 
-(defconstant +priority-critical+ 0)
-(defconstant +priority-high+     1)
-(defconstant +priority-medium+   2)
-(defconstant +priority-low+      3)
-(defconstant +priority-backlog+  4)
+(define-constant +priority-critical+ 0)
+(define-constant +priority-high+     1)
+(define-constant +priority-medium+   2)
+(define-constant +priority-low+      3)
+(define-constant +priority-backlog+  4)
 
 (defun parse-priority (string)
   "Parse a priority string (\"P2\" or \"2\") into an integer 0-4."

@@ -3,7 +3,9 @@
   (:local-nicknames
    (#:jzon #:com.inuoe.jzon))
   (:import-from #:alexandria
-                #:define-constant)
+                #:define-constant
+                #:when-let
+                #:if-let)
   (:export
    ;; Status enum equivalents
    #:status-open
@@ -105,6 +107,7 @@
    #:import-jsonl
    #:sync-store
    #:format-timestamp
+   #:format-timestamp-utc
 
    ;; ID generation
    #:generate-id

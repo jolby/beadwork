@@ -10,8 +10,7 @@
           clingon:getopt*
           clingon:run
           clingon:print-usage-and-exit
-          clingon:exit
-          clingon:add-command))
+          clingon:exit))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Global state
@@ -33,7 +32,7 @@
       (let ((beads (merge-pathnames ".beads/" dir)))
         (when (probe-file beads)
           (return beads))
-        (let ((parent (uiop:directory-pathname dir)))
+        (let ((parent (uiop:pathname-directory-pathname dir)))
           (when (equal parent dir)
             (return nil))
           (setf dir parent))))))
@@ -84,18 +83,11 @@
           (issue-title issue)))
 
 (defun format-issue-rich (issue)
-  "Format ISSUE with ANSI colors for terminal."
+  "Format ISSUE for terminal display."
   (let* ((status (issue-status issue))
-         (status-color (ecase status
-                         (:open "~%[green]")
-                         (:in-progress "~%[yellow]")
-                         (:blocked "~%[red]")
-                         (:closed "~%[dim]")
-                         (t "~%[white]")))
-    (format nil "~A[~A[~A~]] ~A ~A"
-            status-color
-            (string-upcase (symbol-name status))
-            "~|"
+         (status-str (string-upcase (symbol-name status))))
+    (format nil "[~A] ~A ~A"
+            status-str
             (format-priority (issue-priority issue))
             (issue-title issue))))
 
@@ -103,8 +95,7 @@
   "Print a list of issues according to *format*."
   (case *format*
     (:json
-     (let ((json:*pretty* t))
-       (format t "~A" (json:encode issues))))
+     (format t "~A" (jzon:stringify issues :pretty t)))
     (:plain
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
@@ -116,8 +107,7 @@
   "Print a single issue in detail."
   (case *format*
     (:json
-     (let ((json:*pretty* t))
-       (format t "~A" (json:encode (format-issue-json issue)))))
+     (format t "~A" (jzon:stringify (format-issue-json issue) :pretty t)))
     (:plain
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
@@ -215,12 +205,12 @@
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
          (store (ensure-store))
-         (status (let ((s (clingon:getopt cmd :status)))
-                   (when s (parse-status s))))
-         (priority (let ((p (clingon:getopt cmd :priority)))
-                     (when p (parse-priority p))))
-         (itype (let ((t (clingon:getopt cmd :type)))
-                  (when t (parse-issue-type t))))
+         (status (when-let (s (clingon:getopt cmd :status))
+                   (parse-status s)))
+         (priority (when-let (p (clingon:getopt cmd :priority))
+                    (parse-priority p)))
+         (itype (when-let (type-val (clingon:getopt cmd :type))
+                  (parse-issue-type type-val)))
          (assignee (clingon:getopt cmd :assignee))
          (limit (clingon:getopt cmd :limit)))
     (let ((issues (list-issues store
@@ -404,13 +394,13 @@
     (unless id
       (format *error-output* "Error: Issue ID required~%")
       (clingon:exit 1))
-    (let ((title (clingon:getopt cmd :title))
-          (description (clingon:getopt cmd :description))
-          (status (let ((s (clingon:getopt cmd :status)))
-                    (when s (parse-status s))))
-          (priority (let ((p (clingon:getopt cmd :priority)))
-                     (when p (parse-priority p))))
-          (assignee (clingon:getopt cmd :assignee)))
+    (let* ((title (clingon:getopt cmd :title))
+           (description (clingon:getopt cmd :description))
+           (status (when-let (s (clingon:getopt cmd :status))
+                     (parse-status s)))
+           (priority (when-let (p (clingon:getopt cmd :priority))
+                      (parse-priority p)))
+            (assignee (clingon:getopt cmd :assignee)))
       (let ((issue (update-issue store id
                                 :title title
                                 :description description
@@ -418,7 +408,7 @@
                                 :priority priority
                                 :assignee assignee)))
         (format t "Updated ~A~%" (issue-id issue))
-        (print-issue-single issue)))))
+        (print-issue-single issue))))
 
 (defun update/command ()
   (clingon:make-command
