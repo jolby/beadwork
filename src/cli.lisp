@@ -408,7 +408,7 @@
                                 :priority priority
                                 :assignee assignee)))
         (format t "Updated ~A~%" (issue-id issue))
-        (print-issue-single issue))))
+        (print-issue-single issue)))))
 
 (defun update/command ()
   (clingon:make-command
@@ -443,7 +443,7 @@
       (format *error-output* "Error: Issue ID required~%")
       (clingon:exit 1))
     (let ((issue (close-issue store id :reason reason)))
-      (format t "Closed ~A: ~A~%" (issue-id issue) reason)))))
+      (format t "Closed ~A: ~A~%" (issue-id issue) reason))))
 
 (defun close/command ()
   (clingon:make-command
