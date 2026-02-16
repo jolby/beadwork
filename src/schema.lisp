@@ -185,7 +185,7 @@
         FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE
     )"))
 
-(defconstant +schema-sql+
+(defparameter +schema-sql+
   (format nil "~{~A;~%~}" *schema-statements*)
   "Full DDL as a single string for reference. Use *schema-statements* for execution.")
 

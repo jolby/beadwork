@@ -1,4 +1,4 @@
-(defsystem "beadwork"
+(asdf:defsystem "beadwork"
   :description "Beadwork — Common Lisp beads issue tracker"
   :author "Joel Boehland"
   :license "MIT"
@@ -13,6 +13,9 @@
                "uiop")
   :pathname "src/"
   :serial nil
+  :build-operation "program-op"
+  :build-pathname "bw"
+  :entry-point "beadwork:main"
   :components ((:file "package")
                (:file "conditions"  :depends-on ("package"))
                (:file "model"       :depends-on ("package" "conditions"))
@@ -21,13 +24,13 @@
                (:file "sync"        :depends-on ("package" "conditions" "model" "storage"))
                (:file "id"          :depends-on ("package" "conditions" "model"))
                (:file "cli"         :depends-on ("package" "conditions" "model" "storage" "sync" "id")))
-  :in-order-to ((test-op (test-op "beadwork/tests"))))
+  :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
 
-(defsystem "beadwork/tests"
+(asdf:defsystem "beadwork/tests"
   :description "Tests for Beadwork"
-  :depends-on ("beadwork" "fiveam")
+  :depends-on ("beadwork" "parachute")
   :pathname "tests/"
   :components ((:file "package")
                (:file "suite" :depends-on ("package")))
-  :perform (test-op (op c)
-                    (symbol-call :fiveam :run! :beadwork)))
+  :perform (asdf:test-op (op c)
+                    (uiop:symbol-call :parachute :test :beadwork)))

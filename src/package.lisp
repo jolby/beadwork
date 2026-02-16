@@ -1,6 +1,9 @@
 (defpackage #:beadwork
   (:use #:cl)
-  (:import-from #:alexandria)
+  (:local-nicknames
+   (#:jzon #:com.inuoe.jzon))
+  (:import-from #:alexandria
+                #:define-constant)
   (:export
    ;; Status enum equivalents
    #:status-open
@@ -55,6 +58,7 @@
    #:issue-dependencies
    #:issue-content-hash
    #:issue-parent-id
+   #:issue-source-repo
 
    ;; Storage protocol
    #:open-store
@@ -76,7 +80,13 @@
    #:add-label
    #:remove-label
    #:get-labels
+   #:list-all-labels
    #:add-comment
+
+   ;; Dependency accessors
+   #:dependency-issue-id
+   #:dependency-depends-on-id
+   #:dependency-dep-type
    #:list-comments
 
    ;; Dirty tracking
@@ -94,6 +104,7 @@
    #:export-jsonl
    #:import-jsonl
    #:sync-store
+   #:format-timestamp
 
    ;; ID generation
    #:generate-id

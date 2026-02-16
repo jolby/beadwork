@@ -10,7 +10,7 @@
 ;;; See EXISTING_BEADS_STRUCTURE_AND_ARCHITECTURE.md §11 for the full spec.
 ;;; ============================================================================
 
-(defconstant +base36-alphabet+ "0123456789abcdefghijklmnopqrstuvwxyz")
+(define-constant +base36-alphabet+ "0123456789abcdefghijklmnopqrstuvwxyz")
 
 (defconstant +default-hash-length+ 3
   "Default number of base-36 characters for the hash portion of an ID.

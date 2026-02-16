@@ -338,7 +338,28 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
                    AND blocker.status NOT IN ('closed', 'tombstone')
                  )
                  ORDER BY i.priority ASC, i.created_at DESC"
-                *issue-select-columns*))
+                 *issue-select-columns*))
+          (rows (sqlite:execute-to-list (store-db store) sql)))
+    (mapcar #'row-to-issue rows)))
+
+;;; ---------------------------------------------------------------------------
+;;; Blocked Issues
+;;; ---------------------------------------------------------------------------
+
+(defun blocked-issues (store)
+  "Return issues that are blocked by unclosed dependencies."
+  (let* ((sql (format nil
+                 "SELECT ~A FROM issues i
+                  WHERE i.status IN ('open', 'in_progress')
+                  AND EXISTS (
+                    SELECT 1 FROM dependencies d
+                    JOIN issues blocker ON blocker.id = d.depends_on_id
+                    WHERE d.issue_id = i.id
+                    AND d.type IN ('blocks', 'parent-child', 'conditional-blocks', 'waits-for')
+                    AND blocker.status NOT IN ('closed', 'tombstone')
+                  )
+                  ORDER BY i.priority ASC, i.created_at DESC"
+                 *issue-select-columns*))
          (rows (sqlite:execute-to-list (store-db store) sql)))
     (mapcar #'row-to-issue rows)))
 
@@ -424,6 +445,13 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
                (store-db store)
                "SELECT label FROM labels WHERE issue_id = ?"
                issue-id)))
+    (mapcar #'first rows)))
+
+(defun list-all-labels (store)
+  "Return a sorted list of all unique labels in the database."
+  (let ((rows (sqlite:execute-to-list
+               (store-db store)
+               "SELECT DISTINCT label FROM labels ORDER BY label")))
     (mapcar #'first rows)))
 
 ;;; ---------------------------------------------------------------------------
