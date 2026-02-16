@@ -31,6 +31,6 @@
   :depends-on ("beadwork" "parachute")
   :pathname "tests/"
   :components ((:file "package")
-               (:file "suite" :depends-on ("package")))
+               (:file "base" :depends-on ("package")))
   :perform (asdf:test-op (op c)
                     (uiop:symbol-call :parachute :test :beadwork)))

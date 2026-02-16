@@ -1,10 +1,8 @@
 (defpackage #:beadwork/tests
-  (:use #:cl #:fiveam))
+  (:use #:cl #:parachute))
 
 (in-package #:beadwork/tests)
 
-(def-suite beadwork-suite)
-
-(in-suite beadwork-suite)
-
-;;; TODO: Add tests
+(define-test beadwork-suite
+  :parent NIL
+  :description "Root suite for all beadwork tests")
