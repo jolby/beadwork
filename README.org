@@ -1,0 +1,180 @@
+* Beadwork (bw) — Common Lisp Issue Tracker
+
+Beadwork is a Common Lisp reimplementation of the original [[https://github.com/steveyegge/beads][beads]] issue tracker and its Rust port [[https://github.com/Dicklesworthstone/beads_rust][beads_rust]]. It aims for a subset of feature compatibility with the SQLite/JSONL datastore approach (not the newer Dolt database version).
+
+It's designed to be interoperable with br (beads_rust), sharing the same `.beads/` SQLite database format.
+
+**CLI Name:** =bw=
+
+**Status:** Alpha — Core commands working, dogfooding in progress
+
+* Installation
+
+**Requirements:**
+- SBCL (or other ASDF-compatible Common Lisp implementation)
+- Quicklisp
+
+**Setup:**
+
+1. Clone or symlink beadwork to your Quicklisp local-projects:
+
+#+begin_src sh
+# Option 1: Clone
+cd ~/quicklisp/local-projects
+git clone https://github.com/yourusername/beadwork.git
+
+# Option 2: Symlink (if working on it)
+ln -s /path/to/repos/beadwork ~/quicklisp/local-projects/beadwork
+#+end_src
+
+2. Build the binary:
+
+#+begin_src sh
+cd ~/quicklisp/local-projects/beadwork
+make build
+#+end_src
+
+3. Install (optional):
+
+#+begin_src sh
+make install  # Installs to ~/.local/bin/bw
+#+end_src
+
+* Usage
+
+**Initialize a new beads project:**
+
+#+begin_src sh
+bw init
+# Or in a specific directory:
+bw init -p /path/to/project
+#+end_src
+
+**List issues:**
+
+#+begin_src sh
+bw list                    # All open issues
+bw list --status closed    # Filter by status
+bw list --priority P1      # Filter by priority
+bw list --type bug        # Filter by type
+bw list -a jboehland     # Filter by assignee
+#+end_src
+
+**Create issues:**
+
+#+begin_src sh
+bw create -t "Fix the bug" -d "Description here"
+bw create -t "New feature" -T feature -p P1
+bw create -t "Child task" --parent bd-abc
+#+end_src
+
+**Update issues:**
+
+#+begin_src sh
+bw update bd-123 -t "New title"
+bw update bd-123 --status in_progress
+bw update bd-123 -p P0
+#+end_src
+
+**Close/reopen issues:**
+
+#+begin_src sh
+bw close bd-123 -r "Fixed the issue"
+bw reopen bd-123
+#+end_src
+
+**Show issue details:**
+
+#+begin_src sh
+bw show bd-123
+#+end_src
+
+**Ready (unblocked) issues:**
+
+#+begin_src sh
+bw ready
+#+end_src
+
+**Dependencies:**
+
+#+begin_src sh
+bw dep add bd-child bd-parent
+bw dep remove bd-child bd-parent
+bw dep list bd-123
+#+end_src
+
+**Labels:**
+
+#+begin_src sh
+bw label add bd-123 important
+bw label remove bd-123 important
+bw label list bd-123
+#+end_src
+
+**Sync (JSONL import/export):**
+
+#+begin_src sh
+bw sync --direction export  # Export to issues.jsonl
+bw sync --direction import # Import from issues.jsonl
+#+end_src
+
+**Output formats:**
+
+All commands support =--format= option:
+
+#+begin_src sh
+bw list --format json     # JSON output
+bw list --format plain    # Plain text
+bw list --format rich     # Rich terminal output (default)
+#+end_src
+
+* Configuration
+
+Beadwork looks for a =.beads/= directory starting from the current directory and walking upward. The directory should contain:
+
+- =beads.db= — SQLite database
+- =config.yaml= — Configuration (optional)
+- =issues.jsonl= — JSONL export for git sync
+
+* Development
+
+**Build from source:**
+
+#+begin_src sh
+cd repos/beadwork
+make build      # Builds bin/bw
+make test      # Run tests
+make clean     # Clean build artifacts
+#+end_src
+
+**Project structure:**
+
+#+begin_example
+beadwork/
+├── src/
+│   ├── package.lisp   # Package definition
+│   ├── conditions.lisp # Error conditions
+│   ├── model.lisp     # Data model (issue, dependency, etc.)
+│   ├── schema.lisp    # SQLite schema
+│   ├── storage.lisp   # CRUD operations
+│   ├── sync.lisp      # JSONL import/export
+│   ├── id.lisp        # ID generation
+│   └── cli.lisp       # CLI commands
+├── test/              # Test suite
+├── beadwork.asd      # ASDF system definition
+└── Makefile          # Build targets
+#+end_example
+
+* Interoperability with br
+
+Beadwork implements a subset of the original beads/br feature set, focusing on the core issue tracking functionality with SQLite + JSONL storage. It uses the same database schema as br (beads_rust), so you can:
+
+- Use =br= to work on an issue, then =bw= to work on another
+- Both tools read/write the same =.beads/beads.db=
+- JSONL export/import is compatible
+
+Note: Beadwork does not implement all features of br — it's a ground-up CL implementation with a focused scope for human and agentic workflows.
+
+* License
+
+MIT
