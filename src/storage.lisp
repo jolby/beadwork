@@ -42,9 +42,9 @@ Returns NIL if STRING is NIL or empty."
 ;;; ---------------------------------------------------------------------------
 
 (defclass store ()
-  ((db :accessor store-db :initform nil)
-   (db-path :initarg :db-path :accessor store-db-path)
-   (prefix :initarg :prefix :accessor store-prefix :initform "bd")))
+  ((%db :accessor store-db :initform nil)
+   (%db-path :initarg :db-path :accessor store-db-path)
+   (%prefix :initarg :prefix :accessor store-prefix :initform "bd")))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Open / Close / with-store

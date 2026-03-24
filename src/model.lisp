@@ -25,7 +25,7 @@
       ((string= s "deferred")                     :deferred)
       ((string= s "closed")                       :closed)
       ((string= s "tombstone")                    :tombstone)
-      (t (error "Invalid status: ~A" string)))))
+      (t (error 'invalid-status :status string :message (format nil "Invalid status: ~A" string))))))
 
 (defun status-terminal-p (status)
   "True when STATUS is a terminal state (:closed or :tombstone)."
@@ -54,7 +54,7 @@
                      s))
          (val (parse-integer digits :junk-allowed nil)))
     (unless (valid-priority-p val)
-      (error "Priority out of range: ~A" val))
+      (error 'invalid-priority :priority val :message (format nil "Priority out of range: ~A" val)))
     val))
 
 (defun format-priority (priority)
@@ -91,7 +91,7 @@
       ((string= s "chore")    :chore)
       ((string= s "docs")     :docs)
       ((string= s "question") :question)
-      (t (error "Invalid issue type: ~A" string)))))
+      (t (error 'invalid-issue-type :issue-type string :message (format nil "Invalid issue type: ~A" string))))))
 
 ;;; ============================================================================
 ;;; Dependency Type
@@ -127,7 +127,7 @@
       ((string= s "duplicates")         :duplicates)
       ((string= s "supersedes")         :supersedes)
       ((string= s "caused-by")          :caused-by)
-      (t (error "Invalid dependency type: ~A" string)))))
+      (t (error 'beadwork-error :message (format nil "Invalid dependency type: ~A" string))))))
 
 (defun dependency-blocking-p (dep-type)
   "True when DEP-TYPE is a blocking dependency that affects ready-work."
@@ -139,91 +139,91 @@
 ;;; ============================================================================
 
 (defclass issue ()
-  ((id
+  ((%id
     :initarg :id
     :accessor issue-id)
-   (content-hash
+   (%content-hash
     :initarg :content-hash
     :accessor issue-content-hash
     :initform nil)
-   (title
+   (%title
     :initarg :title
     :accessor issue-title)
-   (description
+   (%description
     :initarg :description
     :accessor issue-description
     :initform "")
-   (design
+   (%design
     :initarg :design
     :accessor issue-design
     :initform "")
-   (acceptance-criteria
+   (%acceptance-criteria
     :initarg :acceptance-criteria
     :accessor issue-acceptance-criteria
     :initform "")
-   (notes
+   (%notes
     :initarg :notes
     :accessor issue-notes
     :initform "")
-   (status
+   (%status
     :initarg :status
     :accessor issue-status
     :initform :open)
-   (priority
+   (%priority
     :initarg :priority
     :accessor issue-priority
     :initform 2)
-   (issue-type
+   (%issue-type
     :initarg :issue-type
     :accessor issue-type
     :initform :task)
-   (assignee
+   (%assignee
     :initarg :assignee
     :accessor issue-assignee
     :initform nil)
-   (owner
+   (%owner
     :initarg :owner
     :accessor issue-owner
     :initform "")
-   (estimated-minutes
+   (%estimated-minutes
     :initarg :estimated-minutes
     :accessor issue-estimated-minutes
     :initform nil)
-   (created-at
+   (%created-at
     :initarg :created-at
     :accessor issue-created-at)
-   (created-by
+   (%created-by
     :initarg :created-by
     :accessor issue-created-by
     :initform "")
-   (updated-at
+   (%updated-at
     :initarg :updated-at
     :accessor issue-updated-at)
-   (closed-at
+   (%closed-at
     :initarg :closed-at
     :accessor issue-closed-at
     :initform nil)
-   (close-reason
+   (%close-reason
     :initarg :close-reason
     :accessor issue-close-reason
     :initform "")
-   (source-repo
+   (%source-repo
     :initarg :source-repo
     :accessor issue-source-repo
     :initform ".")
-   (external-ref
+   (%external-ref
     :initarg :external-ref
     :accessor issue-external-ref
     :initform nil)
-   (labels
+   (%labels
     :initarg :labels
     :accessor issue-labels
     :initform nil)
-   (dependencies
+   (%dependencies
     :initarg :dependencies
     :accessor issue-dependencies
     :initform nil)
-   (comments
+   (%comments
     :initarg :comments
     :accessor issue-comments
     :initform nil))
@@ -236,28 +236,28 @@
 ;;; ============================================================================
 
 (defclass dependency ()
-  ((issue-id
+  ((%issue-id
     :initarg :issue-id
     :accessor dependency-issue-id)
-   (depends-on-id
+   (%depends-on-id
     :initarg :depends-on-id
     :accessor dependency-depends-on-id)
-   (dep-type
+   (%dep-type
     :initarg :dep-type
     :accessor dependency-dep-type
     :initform :blocks)
-   (created-at
+   (%created-at
     :initarg :created-at
     :accessor dependency-created-at)
-   (created-by
+   (%created-by
     :initarg :created-by
     :accessor dependency-created-by
     :initform nil)
-   (metadata
+   (%metadata
     :initarg :metadata
     :accessor dependency-metadata
     :initform nil)
-   (thread-id
+   (%thread-id
     :initarg :thread-id
     :accessor dependency-thread-id
     :initform nil))
@@ -269,19 +269,19 @@
 ;;; ============================================================================
 
 (defclass comment ()
-  ((id
+  ((%id
     :initarg :id
     :accessor comment-id)
-   (issue-id
+   (%issue-id
     :initarg :issue-id
     :accessor comment-issue-id)
-   (author
+   (%author
     :initarg :author
     :accessor comment-author)
-   (body
+   (%body
     :initarg :body
     :accessor comment-body)
-   (created-at
+   (%created-at
     :initarg :created-at
     :accessor comment-created-at))
   (:default-initargs
@@ -292,31 +292,31 @@
 ;;; ============================================================================
 
 (defclass event ()
-  ((id
+  ((%id
     :initarg :id
     :accessor event-id)
-   (issue-id
+   (%issue-id
     :initarg :issue-id
     :accessor event-issue-id)
-   (event-type
+   (%event-type
     :initarg :event-type
     :accessor event-event-type)
-   (actor
+   (%actor
     :initarg :actor
     :accessor event-actor)
-   (old-value
+   (%old-value
     :initarg :old-value
     :accessor event-old-value
     :initform nil)
-   (new-value
+   (%new-value
     :initarg :new-value
     :accessor event-new-value
     :initform nil)
-   (comment
+   (%comment
     :initarg :comment
     :accessor event-comment
     :initform nil)
-   (created-at
+   (%created-at
     :initarg :created-at
     :accessor event-created-at))
   (:default-initargs

@@ -41,7 +41,7 @@
   "Find the SQLite database path."
   (let ((beads-dir (find-beads-dir)))
     (unless beads-dir
-      (error "No .beads/ directory found. Run 'bw init' first."))
+      (error 'beadwork-error :message "No .beads/ directory found. Run 'bw init' first."))
     (merge-pathnames "beads.db" beads-dir)))
 
 (defun resolve-store ()
@@ -93,19 +93,19 @@
 
 (defun print-issues (issues)
   "Print a list of issues according to *format*."
-  (case *format*
+  (ecase *format*
     (:json
      (format t "~A" (jzon:stringify issues :pretty t)))
     (:plain
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
-    (t
+    (:rich
      (dolist (issue issues)
        (format t "~A~%" (format-issue-rich issue))))))
 
 (defun print-issue-single (issue)
   "Print a single issue in detail."
-  (case *format*
+  (ecase *format*
     (:json
      (format t "~A" (jzon:stringify (format-issue-json issue) :pretty t)))
     (:plain
@@ -120,7 +120,7 @@
      (format t "Updated: ~A~%" (format-timestamp (issue-updated-at issue)))
      (when (issue-description issue)
        (format t "~%~A~%" (issue-description issue))))
-    (t
+    (:rich
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
      (format t "Status: ~A~%" (issue-status issue))
@@ -664,18 +664,17 @@
 (defun sync/handler (cmd)
   (let* ((store (ensure-store))
          (direction (clingon:getopt cmd :direction)))
-    (case (intern (string-upcase direction) :keyword)
-      (:export
+    (cond
+      ((string-equal direction "export")
        (let ((path (merge-pathnames "issues.jsonl" (find-beads-dir))))
          (export-jsonl store (namestring path))
          (format t "Exported to ~A~%" path)))
-      (:import
+      ((string-equal direction "import")
        (let ((path (merge-pathnames "issues.jsonl" (find-beads-dir))))
          (import-jsonl store (namestring path))
          (format t "Imported from ~A~%" path)))
       (t
-       (format *error-output* "Error: Invalid direction~%")
-       (clingon:exit 1)))))
+       (error 'beadwork-error :message (format nil "Invalid sync direction: ~A" direction))))))
 
 (defun sync/options ()
   (list
