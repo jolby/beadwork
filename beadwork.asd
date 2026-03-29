@@ -11,28 +11,30 @@
                "alexandria"
                "cl-ppcre"
                "uiop")
-  :serial nil
   :build-operation "program-op"
   :build-pathname #p"bw"
   :entry-point "beadwork:main"
+  :serial T
   :components ((:module "src"
                 :components
                 ((:file "package")
-                 (:file "conditions"  :depends-on ("package"))
-                 (:file "model"       :depends-on ("package" "conditions"))
-                 (:file "schema"      :depends-on ("package" "conditions" "model"))
-                 (:file "storage"     :depends-on ("package" "conditions" "model" "schema"))
-                 (:file "sync"        :depends-on ("package" "conditions" "model" "storage"))
-                 (:file "id"          :depends-on ("package" "conditions" "model"))
-                 (:file "cli"         :depends-on ("package" "conditions" "model" "storage" "sync" "id")))))
+                 (:file "conditions")
+                 (:file "model")
+                 (:file "schema")
+                 (:file "storage")
+                 (:file "sync")
+                 (:file "id")
+                 (:file "cli"))))
   :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
 
 (asdf:defsystem "beadwork/tests"
   :description "Tests for Beadwork"
   :depends-on ("beadwork" "parachute")
+  :serial T
   :components ((:module "test"
                 :components
                 ((:file "package")
-                 (:file "base" :depends-on ("package")))))
+                 (:file "suite") 
+                 (:file "base"))))
   :perform (asdf:test-op (op c)
                     (uiop:symbol-call :parachute :test :beadwork)))
