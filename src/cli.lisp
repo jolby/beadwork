@@ -144,7 +144,12 @@
     :string
     :long-name "db"
     :description "Path to .beads/ directory"
-    :key :db-path)))
+    :key :db-path)
+   (clingon:make-option
+    :string
+    :long-name "repo"
+    :description "Filter by source repository (e.g. beadwork, cogen-ai)"
+    :key :source-repo)))
 
 (defun parse-format (value)
   "Convert format string to keyword."
@@ -200,13 +205,15 @@
          (itype (when-let (type-val (clingon:getopt cmd :type))
                   (parse-issue-type type-val)))
          (assignee (clingon:getopt cmd :assignee))
-         (limit (clingon:getopt cmd :limit)))
+         (limit (clingon:getopt cmd :limit))
+         (source-repo (clingon:getopt cmd :source-repo)))
     (let ((issues (list-issues store
                                :status status
                                :priority priority
                                :type itype
                                :assignee assignee
-                               :limit limit)))
+                               :limit limit
+                               :source-repo source-repo)))
       (print-issues issues))))
 
 (defun list/command ()
@@ -214,7 +221,7 @@
    :name "list"
    :description "List issues with optional filters"
    :aliases '("ls" "l")
-   :options (list/options)
+   :options (append (list/options) (global-options))
    :handler #'list/handler))
 
 ;;; ---------------------------------------------------------------------------
@@ -225,9 +232,12 @@
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
          (store (ensure-store)))
-    (let ((issues (ready-issues store)))
+    (let* ((source-repo (clingon:getopt cmd :source-repo))
+           (issues (ready-issues store :source-repo source-repo)))
       (unless (eq *format* :json)
-        (format t "📋 Ready work (~D issues):~%~%" (length issues)))
+        (if source-repo
+            (format t "📋 Ready work for ~A (~D issues):~%~%" source-repo (length issues))
+            (format t "📋 Ready work (~D issues):~%~%" (length issues))))
       (print-issues issues))))
 
 (defun ready/command ()
@@ -293,14 +303,16 @@
          (itype (parse-issue-type (clingon:getopt cmd :type)))
          (priority (parse-priority (clingon:getopt cmd :priority)))
          (assignee (clingon:getopt cmd :assignee))
-         (parent (clingon:getopt cmd :parent)))
+         (parent (clingon:getopt cmd :parent))
+         (source-repo (clingon:getopt cmd :source-repo)))
     (let ((issue (create-issue store
                                :title title
                                :description description
                                :type itype
                                :priority priority
                                :assignee assignee
-                               :parent parent)))
+                               :parent parent
+                               :source-repo source-repo)))
       (format t "Created ~A~%" (issue-id issue))
       (print-issue-single issue))))
 

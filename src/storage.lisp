@@ -139,7 +139,7 @@ Column order must match the canonical SELECT order used throughout this file."
     next))
 
 (defun create-issue (store &key title (type :task) (priority 2) description
-                              parent assignee owner)
+                              parent assignee owner source-repo)
   "Create a new issue in the database. Returns the created issue object.
 
 If PARENT is given, generates a child ID and adds a parent-child dependency."
@@ -179,7 +179,7 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
      (status-string :open) priority (issue-type-string type)
      assignee (or owner "") nil
      now-str "" now-str nil "" ""
-     nil nil nil "" "."
+     nil nil nil "" (or source-repo ".")
      nil "" "" ""
      0 nil nil nil
      "" 0 0 0)
@@ -295,7 +295,7 @@ Only non-NIL keyword arguments cause updates."
 ;;; List Issues
 ;;; ---------------------------------------------------------------------------
 
-(defun list-issues (store &key status type priority assignee limit offset)
+(defun list-issues (store &key status type priority assignee limit offset source-repo)
   "List issues with optional filters. Returns a list of issue objects.
 ORDER BY priority ASC, created_at DESC."
   (let ((clauses (list "1=1"))
@@ -312,6 +312,9 @@ ORDER BY priority ASC, created_at DESC."
     (when assignee
       (push "assignee = ?" clauses)
       (push assignee params))
+    (when source-repo
+      (push "source_repo = ?" clauses)
+      (push source-repo params))
     (let ((sql (format nil "SELECT ~A FROM issues WHERE ~{~A~^ AND ~} ORDER BY priority ASC, created_at DESC"
                        *issue-select-columns* (nreverse clauses))))
       (when limit
@@ -328,14 +331,18 @@ ORDER BY priority ASC, created_at DESC."
 ;;; Ready Issues
 ;;; ---------------------------------------------------------------------------
 
-(defun ready-issues (store)
+(defun ready-issues (store &key source-repo)
   "Return issues that are open/in_progress and not blocked by any unclosed
 blocking dependency. Uses NOT EXISTS subquery against dependencies table."
-  (let* ((sql (format nil
+  (let* ((repo-clause (if source-repo
+                          "AND i.source_repo = ?"
+                          ""))
+         (sql (format nil
                 "SELECT ~A FROM issues i
                  WHERE i.status IN ('open', 'in_progress')
                  AND i.ephemeral = 0
                  AND (i.is_template = 0 OR i.is_template IS NULL)
+                 ~A
                  AND NOT EXISTS (
                    SELECT 1 FROM dependencies d
                    JOIN issues blocker ON blocker.id = d.depends_on_id
@@ -344,8 +351,11 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
                    AND blocker.status NOT IN ('closed', 'tombstone')
                  )
                  ORDER BY i.priority ASC, i.created_at DESC"
-                 *issue-select-columns*))
-          (rows (sqlite:execute-to-list (store-db store) sql)))
+                 *issue-select-columns*
+                 repo-clause))
+         (rows (if source-repo
+                   (sqlite:execute-to-list (store-db store) sql source-repo)
+                   (sqlite:execute-to-list (store-db store) sql))))
     (mapcar #'row-to-issue rows)))
 
 ;;; ---------------------------------------------------------------------------

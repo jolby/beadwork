@@ -81,6 +81,9 @@
         AND pinned = 0
         AND (is_template = 0 OR is_template IS NULL)"
 
+   ;; Project-scoped queries
+   "CREATE INDEX IF NOT EXISTS idx_issues_source_repo ON issues(source_repo)"
+
    ;; ---- Dependencies table ----
    "CREATE TABLE IF NOT EXISTS dependencies (
         issue_id TEXT NOT NULL,
