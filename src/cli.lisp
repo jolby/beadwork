@@ -238,7 +238,8 @@
          (*format* (parse-format format-val))
          (store (ensure-store)))
     (let ((issues (ready-issues store)))
-      (format t "📋 Ready work (~D issues):~%~%" (length issues))
+      (unless (eq *format* :json)
+        (format t "📋 Ready work (~D issues):~%~%" (length issues)))
       (print-issues issues))))
 
 (defun ready/command ()
