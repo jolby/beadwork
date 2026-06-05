@@ -62,18 +62,6 @@
 ;;; Output Formatting
 ;;; ---------------------------------------------------------------------------
 
-(defun format-issue-json (issue)
-  "Serialize ISSUE to a JSON-compatible plist."
-  (list :id (issue-id issue)
-        :title (issue-title issue)
-        :description (issue-description issue)
-        :status (string-downcase (symbol-name (issue-status issue)))
-        :priority (issue-priority issue)
-        :issue-type (issue-type-string (issue-type issue))
-        :assignee (issue-assignee issue)
-        :created-at (format-timestamp (issue-created-at issue))
-        :updated-at (format-timestamp (issue-updated-at issue))))
-
 (defun format-issue-plain (issue)
   "Format ISSUE as plain text line."
   (format nil "[~A] [~A] [~A] ~A"
@@ -107,7 +95,7 @@
   "Print a single issue in detail."
   (ecase *format*
     (:json
-     (format t "~A" (jzon:stringify (format-issue-json issue) :pretty t)))
+     (format t "~A" (jzon:stringify issue :pretty t)))
     (:plain
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))

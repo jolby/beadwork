@@ -231,6 +231,30 @@
    :created-at (local-time:now)
    :updated-at (local-time:now)))
 
+(defmethod jzon:coerced-fields ((issue issue))
+  "Return cleanly-named fields for JSON serialization, stripping % slot prefixes."
+  (list (list "id" (issue-id issue))
+        (list "content-hash" (issue-content-hash issue) 'null)
+        (list "title" (issue-title issue))
+        (list "description" (issue-description issue) 'null)
+        (list "design" (issue-design issue) 'null)
+        (list "acceptance-criteria" (issue-acceptance-criteria issue) 'null)
+        (list "notes" (issue-notes issue) 'null)
+        (list "status" (string-downcase (symbol-name (issue-status issue))))
+        (list "priority" (issue-priority issue))
+        (list "issue-type" (issue-type-string (issue-type issue)))
+        (list "assignee" (issue-assignee issue) 'null)
+        (list "owner" (issue-owner issue) 'null)
+        (list "estimated-minutes" (issue-estimated-minutes issue) 'null)
+        (list "created-at" (format-timestamp (issue-created-at issue)))
+        (list "created-by" (issue-created-by issue) 'null)
+        (list "updated-at" (format-timestamp (issue-updated-at issue)))
+        (list "closed-at" (when (issue-closed-at issue)
+                             (format-timestamp (issue-closed-at issue))) 'null)
+        (list "close-reason" (issue-close-reason issue) 'null)
+        (list "source-repo" (issue-source-repo issue))
+        (list "external-ref" (issue-external-ref issue) 'null)))
+
 ;;; ============================================================================
 ;;; Dependency
 ;;; ============================================================================
