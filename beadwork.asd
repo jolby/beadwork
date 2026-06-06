@@ -36,6 +36,7 @@
                 ((:file "package")
                  (:file "suite")
                  (:file "base")
-                 (:file "timestamp"))))
+                 (:file "timestamp")
+                 (:file "sync"))))
   :perform (asdf:test-op (op c)
                     (uiop:symbol-call :parachute :test :beadwork/tests)))

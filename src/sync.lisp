@@ -65,8 +65,9 @@ Fields with nil/empty values are omitted (serde omitempty behavior)."
     (set-when-present ht "external_ref" (issue-external-ref issue))
     (set-when-present ht "content_hash" (issue-content-hash issue))
 
-    ;; Optional timestamp fields
-    (let ((closed-at (format-timestamp-utc (issue-closed-at issue))))
+    ;; Optional timestamp fields — guard against NIL closed-at (open issues)
+    (let ((closed-at (when (issue-closed-at issue)
+                       (format-timestamp-utc (issue-closed-at issue)))))
       (set-when-present ht "closed_at" closed-at))
 
     ;; Optional integer fields
@@ -263,7 +264,8 @@ created_at. Clears dirty flags after successful export."
     (format-timestamp-utc (issue-created-at issue))
     (issue-created-by issue)
     (format-timestamp-utc (issue-updated-at issue))
-    (format-timestamp-utc (issue-closed-at issue))
+    (when (issue-closed-at issue)
+      (format-timestamp-utc (issue-closed-at issue)))
     (issue-close-reason issue)
     (issue-source-repo issue)
     (issue-external-ref issue)))

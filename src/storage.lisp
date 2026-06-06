@@ -18,13 +18,18 @@
   "local-time format list producing RFC 3339 timestamps for SQLite storage.")
 
 (defun %clip-nsec (ts-str)
-  "Clip nanosecond precision (9 digits) to microsecond (6 digits).
-local-time always emits 9 fractional digits regardless of (:nsec N).
-The format is fixed: YYYY-MM-DDTHH:MM:SS.fffffffff±HHMM → YYYY-MM-DDTHH:MM:SS.ffffff±HHMM"
-  (concatenate 'string
-               (subseq ts-str 0 20)     ; "YYYY-MM-DDTHH:MM:SS."
-               (subseq ts-str 20 26)    ; first 6 fractional digits
-               (subseq ts-str 29)))     ; offset "±HHMM"
+  "Clip nanosecond precision (9+ digits) to microsecond (6 digits).
+local-time always emits 9+ fractional digits regardless of (:nsec N).
+Handles both ±HHMM (bw) and ±HH:MM (br) timezone offset formats."
+  (let* ((dot-pos (position #\. ts-str))
+         (sign-pos (or (position #\+ ts-str :start dot-pos)
+                        (position #\- ts-str :start dot-pos))))
+    (if (and dot-pos sign-pos)
+        (concatenate 'string
+                     (subseq ts-str 0 (1+ dot-pos))   ; "...HH:MM:SS."
+                     (subseq ts-str (1+ dot-pos) (+ dot-pos 7))  ; 6 fractional digits
+                     (subseq ts-str sign-pos))         ; offset from sign onwards
+        ts-str)))
 
 (defun format-timestamp (timestamp)
   "Format a local-time TIMESTAMP as an RFC 3339 string with microsecond precision."
