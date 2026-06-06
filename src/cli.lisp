@@ -292,7 +292,12 @@
     :string
     :long-name "parent"
     :description "Parent issue ID for child issues"
-    :key :parent)))
+    :key :parent)
+   (clingon:make-option
+    :string
+    :long-name "blocks-on"
+    :description "Issue ID that the new issue blocks on (adds dependency)"
+    :key :blocks-on)))
 
 (defun create/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
@@ -304,6 +309,7 @@
          (priority (parse-priority (clingon:getopt cmd :priority)))
          (assignee (clingon:getopt cmd :assignee))
          (parent (clingon:getopt cmd :parent))
+         (blocks-on (clingon:getopt cmd :blocks-on))
          (source-repo (clingon:getopt cmd :source-repo)))
     (let ((issue (create-issue store
                                :title title
@@ -313,6 +319,9 @@
                                :assignee assignee
                                :parent parent
                                :source-repo source-repo)))
+      ;; Add blocking dependency if --blocks-on specified
+      (when blocks-on
+        (add-dependency store (issue-id issue) blocks-on))
       (unless (eq *format* :json)
         (format t "Created ~A~%" (issue-id issue)))
       (print-issue-single issue))))
