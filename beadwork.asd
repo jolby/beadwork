@@ -34,7 +34,8 @@
   :components ((:module "test"
                 :components
                 ((:file "package")
-                 (:file "suite") 
-                 (:file "base"))))
+                 (:file "suite")
+                 (:file "base")
+                 (:file "timestamp"))))
   :perform (asdf:test-op (op c)
-                    (uiop:symbol-call :parachute :test :beadwork)))
+                    (uiop:symbol-call :parachute :test :beadwork/tests)))

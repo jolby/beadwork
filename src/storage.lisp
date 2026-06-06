@@ -14,18 +14,27 @@
 (defparameter *rfc3339-format*
   '((:year 4) #\- (:month 2) #\- (:day 2)
     #\T (:hour 2) #\: (:min 2) #\: (:sec 2)
-    #\. (:nsec 9) :gmt-offset-hhmm)
+    #\. (:nsec 6) :gmt-offset-hhmm)
   "local-time format list producing RFC 3339 timestamps for SQLite storage.")
 
+(defun %clip-nsec (ts-str)
+  "Clip nanosecond precision (9 digits) to microsecond (6 digits).
+local-time always emits 9 fractional digits regardless of (:nsec N).
+The format is fixed: YYYY-MM-DDTHH:MM:SS.fffffffff±HHMM → YYYY-MM-DDTHH:MM:SS.ffffff±HHMM"
+  (concatenate 'string
+               (subseq ts-str 0 20)     ; "YYYY-MM-DDTHH:MM:SS."
+               (subseq ts-str 20 26)    ; first 6 fractional digits
+               (subseq ts-str 29)))     ; offset "±HHMM"
+
 (defun format-timestamp (timestamp)
-  "Format a local-time TIMESTAMP as an RFC 3339 string for SQLite storage."
-  (local-time:format-timestring nil timestamp :format *rfc3339-format*))
+  "Format a local-time TIMESTAMP as an RFC 3339 string with microsecond precision."
+  (%clip-nsec (local-time:format-timestring nil timestamp :format *rfc3339-format*)))
 
 (defun format-timestamp-utc (timestamp)
-  "Format a local-time TIMESTAMP as an RFC 3339 string in UTC."
-  (local-time:format-timestring nil timestamp
-                                :format *rfc3339-format*
-                                :timezone local-time:+utc-zone+))
+  "Format a local-time TIMESTAMP as an RFC 3339 string in UTC with microsecond precision."
+  (%clip-nsec (local-time:format-timestring nil timestamp
+                                             :format *rfc3339-format*
+                                             :timezone local-time:+utc-zone+)))
 
 (defun format-timestamp-or-null (timestamp)
   "Format TIMESTAMP as RFC 3339, or return NIL if TIMESTAMP is NIL."
