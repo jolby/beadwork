@@ -313,7 +313,8 @@
                                :assignee assignee
                                :parent parent
                                :source-repo source-repo)))
-      (format t "Created ~A~%" (issue-id issue))
+      (unless (eq *format* :json)
+        (format t "Created ~A~%" (issue-id issue)))
       (print-issue-single issue))))
 
 (defun create/command ()
@@ -408,7 +409,8 @@
                                 :status status
                                 :priority priority
                                 :assignee assignee)))
-        (format t "Updated ~A~%" (issue-id issue))
+        (unless (eq *format* :json)
+          (format t "Updated ~A~%" (issue-id issue)))
         (print-issue-single issue)))))
 
 (defun update/command ()
@@ -444,7 +446,9 @@
       (format *error-output* "Error: Issue ID required~%")
       (clingon:exit 1))
     (let ((issue (close-issue store id :reason reason)))
-      (format t "Closed ~A: ~A~%" (issue-id issue) reason))))
+      (unless (eq *format* :json)
+        (format t "Closed ~A: ~A~%" (issue-id issue) reason))
+      (print-issue-single issue))))
 
 (defun close/command ()
   (clingon:make-command
@@ -467,7 +471,8 @@
       (format *error-output* "Error: Issue ID required~%")
       (clingon:exit 1))
     (let ((issue (reopen-issue store id)))
-      (format t "Reopened ~A~%" (issue-id issue))
+      (unless (eq *format* :json)
+        (format t "Reopened ~A~%" (issue-id issue)))
       (print-issue-single issue))))
 
 (defun reopen/command ()
