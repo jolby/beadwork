@@ -395,7 +395,13 @@
     :short-name #\a
     :long-name "assignee"
     :description "New assignee"
-    :key :assignee)))
+    :key :assignee)
+   (clingon:make-option
+    :string
+    :short-name #\n
+    :long-name "notes"
+    :description "New notes"
+    :key :notes)))
 
 (defun update/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
@@ -411,13 +417,15 @@
                      (parse-status s)))
            (priority (when-let (p (clingon:getopt cmd :priority))
                       (parse-priority p)))
-            (assignee (clingon:getopt cmd :assignee)))
+            (assignee (clingon:getopt cmd :assignee))
+            (notes (clingon:getopt cmd :notes)))
       (let ((issue (update-issue store id
                                 :title title
                                 :description description
                                 :status status
                                 :priority priority
-                                :assignee assignee)))
+                                :assignee assignee
+                                :notes notes)))
         (unless (eq *format* :json)
           (format t "Updated ~A~%" (issue-id issue)))
         (print-issue-single issue)))))

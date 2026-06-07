@@ -100,7 +100,7 @@ Column order must match the canonical SELECT order used throughout this file."
                        compaction-level compacted-at compacted-at-commit
                        original-size sender ephemeral pinned is-template)
       row
-    (declare (ignore design acceptance-criteria notes closed-by-session
+    (declare (ignore design acceptance-criteria closed-by-session
                     due-at defer-until source-system
                     deleted-at deleted-by delete-reason original-type
                     compaction-level compacted-at compacted-at-commit
@@ -113,6 +113,7 @@ Column order must match the canonical SELECT order used throughout this file."
       :status (parse-status (or status "open"))
       :priority (or priority 2)
       :issue-type (parse-issue-type (or issue-type "task"))
+      :notes (or notes "")
       :assignee assignee
       :owner (or owner "")
       :estimated-minutes estimated-minutes
@@ -226,7 +227,7 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
 ;;; ---------------------------------------------------------------------------
 
 (defun update-issue (store id &key title status priority description assignee
-                                   owner issue-type close-reason)
+                                   notes owner issue-type close-reason)
   "Update specified fields of issue ID. Returns the updated issue.
 Only non-NIL keyword arguments cause updates."
   (let* ((db (store-db store))
@@ -242,6 +243,7 @@ Only non-NIL keyword arguments cause updates."
       (when-field priority "priority = ?" priority)
       (when-field description "description = ?" description)
       (when-field assignee "assignee = ?" assignee)
+      (when-field notes "notes = ?" notes)
       (when-field owner "owner = ?" owner)
       (when-field issue-type "issue_type = ?" (issue-type-string issue-type))
       (when-field close-reason "close_reason = ?" close-reason))
