@@ -113,3 +113,16 @@
     (when dir
       (true (probe-file dir))
       (true (ppcre:scan "status/?$" (namestring dir))))))
+
+(define-test runs-status-docs-check
+  :parent doctor-suite
+  (let ((status-dir (beadwork::find-status-docs-dir)))
+    (when status-dir
+      (let* ((store (beadwork::open-store ":memory:"))
+             (result (beadwork::run-doctor-status-docs store status-dir)))
+        (beadwork::close-store store)
+        ;; Should return a plist
+        (true (getf result :status-doc))
+        (true (getf result :findings))
+        (true (getf result :summary))
+        (true (listp (getf result :findings)))))))
