@@ -82,3 +82,18 @@ only after at least one data row has been collected."
                  (push (list priority task id) rows)
                  (setf started t))))))))
     (nreverse rows)))
+
+(defun find-latest-status-doc (status-dir)
+  "Return the pathname of the latest status doc in STATUS-DIR.
+Latest is determined by highest timestamp in filename (YYYYMMDDTHHMM-*.md).
+Returns NIL if no matching files found."
+  (let ((files (uiop:directory-files status-dir "*.md")))
+    (first (sort files #'string>
+                 :key (lambda (f) (pathname-name f))))))
+
+(defun find-status-docs-dir ()
+  "Resolve the status docs directory relative to current working directory.
+Returns the pathname if it exists, or NIL."
+  (let ((dir (merge-pathnames "resources/project/status/" (uiop:getcwd))))
+    (when (probe-file dir)
+      dir)))

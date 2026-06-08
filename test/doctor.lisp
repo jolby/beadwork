@@ -93,3 +93,23 @@
   (is equal nil (beadwork::extract-bw-id "N/A"))
   ;; Embedded ID in text returns nil (strict match)
   (is equal nil (beadwork::extract-bw-id "see bd-abc for details")))
+
+(define-test finds-latest-status-doc
+  :parent doctor-suite
+  (let ((status-dir (merge-pathnames
+                     "resources/project/status/"
+                     (uiop:getcwd))))
+    (when (probe-file status-dir)
+      (let ((latest (beadwork::find-latest-status-doc status-dir)))
+        ;; Should return a pathname
+        (true latest)
+        ;; Should end with .md
+        (true (ppcre:scan "\\.md$" (namestring latest)))))))
+
+(define-test resolves-status-docs-dir
+  :parent doctor-suite
+  ;; When run from cogen-meta root, it should find the status dir
+  (let ((dir (beadwork::find-status-docs-dir)))
+    (when dir
+      (true (probe-file dir))
+      (true (ppcre:scan "status/?$" (namestring dir))))))
