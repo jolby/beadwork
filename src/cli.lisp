@@ -717,6 +717,100 @@
    :handler #'sync/handler))
 
 ;;; ---------------------------------------------------------------------------
+;;; Command: doctor
+;;; ---------------------------------------------------------------------------
+
+(defun doctor/options ()
+  (list
+   (clingon:make-option
+    :boolean
+    :long-name "all"
+    :description "Scan all status docs, not just latest"
+    :key :all)
+   (clingon:make-option
+    :string
+    :long-name "status-dir"
+    :description "Path to status docs directory"
+    :key :status-dir)))
+
+(defun doctor-status-docs/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (status-dir (or (clingon:getopt cmd :status-dir)
+                         (find-status-docs-dir))))
+    (unless status-dir
+      (format *error-output* "Error: No status docs directory found.~%")
+      (format *error-output* "Run from project root or use --status-dir <path>~%")
+      (clingon:exit 2))
+    (let ((result (run-doctor-status-docs store status-dir)))
+      (when (getf result :error)
+        (unless (eq *format* :json)
+          (format t "bw doctor: ~A~%" (getf result :error)))
+        (clingon:exit 2))
+      (let ((exit-code (report-doctor-findings
+                        result
+                        (if (eq *format* :json) :json :human))))
+        (clingon:exit exit-code)))))
+
+(defun doctor-status-docs/command ()
+  (clingon:make-command
+   :name "status-docs"
+   :description "Cross-reference status doc What's Next against beadwork issues"
+   :options (global-options)
+   :handler #'doctor-status-docs/handler))
+
+(defun doctor-health/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (status-dir (or (clingon:getopt cmd :status-dir)
+                         (find-status-docs-dir))))
+    (unless status-dir
+      (format *error-output* "Error: No status docs directory found.~%")
+      (clingon:exit 2))
+    (let ((result (run-doctor-status-docs store status-dir)))
+      (when (getf result :error)
+        (clingon:exit 2))
+      (let* ((summary (getf result :summary))
+             (ok (getf summary :ok))
+             (stale (getf summary :stale))
+             (missing (getf summary :missing))
+             (orphan (getf summary :orphan))
+             (healthy (and (zerop stale) (zerop missing) (zerop orphan))))
+        (if (eq *format* :json)
+            (format t "~A"
+                    (jzon:stringify
+                     (list (list "ok" ok)
+                           (list "stale" stale)
+                           (list "missing" missing)
+                           (list "orphan" orphan)
+                           (list "healthy" healthy))))
+            (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN — exit ~D~%"
+                    ok stale missing orphan (if healthy 0 1)))
+        (clingon:exit (if healthy 0 1))))))
+
+(defun doctor-health/command ()
+  (clingon:make-command
+   :name "health"
+   :description "One-line doctor summary for cold-start integration"
+   :options (global-options)
+   :handler #'doctor-health/handler))
+
+(defun doctor/handler (cmd)
+  "Flat 'bw doctor' — runs status-docs check by default."
+  (doctor-status-docs/handler cmd))
+
+(defun doctor/command ()
+  (clingon:make-command
+   :name "doctor"
+   :description "Run project-health diagnostics (status doc ↔ issue sync)"
+   :options (append (doctor/options) (global-options))
+   :handler #'doctor/handler
+   :sub-commands (list (doctor-status-docs/command)
+                       (doctor-health/command))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Top-level command
 ;;; ---------------------------------------------------------------------------
 
@@ -741,6 +835,7 @@
                        (reopen/command)
                        (dep/command)
                        (label/command)
+                       (doctor/command)
                        (init/command)
                        (sync/command))))
 
