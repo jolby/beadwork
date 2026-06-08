@@ -126,3 +126,29 @@
         (true (getf result :findings))
         (true (getf result :summary))
         (true (listp (getf result :findings)))))))
+
+(define-test reports-doctor-findings-human
+  :parent doctor-suite
+  (let* ((findings (list (list :status :ok :id "bd-abc" :task "Fix bug" :issue-status :open)
+                         (list :status :stale :id "bd-xyz" :task "Done thing" :issue-status :closed)
+                         (list :status :missing :id "bd-zzz" :task "Ghost" :issue-status nil)
+                         (list :status :orphan :id nil :task "No ID task" :issue-status nil)))
+         (summary (list :ok 1 :stale 1 :missing 1 :orphan 1))
+         (result (list :status-doc #P"test.md"
+                       :findings findings
+                       :summary summary))
+         (exit-code (beadwork::report-doctor-findings result :human)))
+    (is = 1 exit-code)))
+
+(define-test reports-doctor-findings-json
+  :parent doctor-suite
+  (let* ((findings (list (list :status :ok :id "bd-abc" :task "Fix bug" :issue-status :open)))
+         (summary (list :ok 1 :stale 0 :missing 0 :orphan 0))
+         (result (list :status-doc #P"test.md"
+                       :findings findings
+                       :summary summary))
+         (json-output (with-output-to-string (s)
+                        (let ((*standard-output* s))
+                          (beadwork::report-doctor-findings result :json)))))
+    (true (ppcre:scan "\"status-doc\"" json-output))
+    (true (ppcre:scan "\"healthy\"" json-output))))

@@ -126,3 +126,72 @@ plists), and :summary (plist with :ok, :stale, :missing, :orphan counts)."
                 :summary (list :ok 0 :stale 0 :missing 0 :orphan 0)
                 :error (format nil "No What's Next section found in ~A"
                                (file-namestring doc)))))))
+
+(defun format-finding-line (finding)
+  "Format a single finding as a human-readable line."
+  (let* ((status (getf finding :status))
+         (id (getf finding :id))
+         (task (getf finding :task))
+         (marker (ecase status
+                   (:ok "OK    ")
+                   (:stale "STALE ")
+                   (:missing "MISS  ")
+                   (:orphan "ORPHAN"))))
+    (format nil "~A ~A  ~A"
+            marker
+            (if id (format nil "~A  " id) "—        ")
+            (string-trim " " task))))
+
+(defun report-doctor-findings (result format)
+  "Print the doctor findings in FORMAT (:human or :json).
+Returns the appropriate exit code: 0 if healthy, 1 if problems found."
+  (ecase format
+    (:human
+     (let* ((doc (getf result :status-doc))
+            (findings (getf result :findings))
+            (summary (getf result :summary))
+            (error (getf result :error))
+            (ok (getf summary :ok))
+            (stale (getf summary :stale))
+            (missing (getf summary :missing))
+            (orphan (getf summary :orphan)))
+       (cond
+         (error
+          (format t "bw doctor: ~A~%" error)
+          2)
+         (t
+          (format t "📋 bw doctor: ~A~%~%" (file-namestring doc))
+          (dolist (f findings)
+            (format t "  ~A~%" (format-finding-line f)))
+          (format t "~%  ~D OK, ~D STALE, ~D MISSING, ~D ORPHAN~%"
+                  ok stale missing orphan)
+          (if (and (zerop stale) (zerop missing) (zerop orphan))
+              0
+              1)))))
+    (:json
+     (let* ((doc (getf result :status-doc))
+            (findings (getf result :findings))
+            (summary (getf result :summary))
+            (healthy (and (zerop (getf summary :stale))
+                          (zerop (getf summary :missing))
+                          (zerop (getf summary :orphan)))))
+       (format t "~A"
+               (jzon:stringify
+                (list (list "status-doc" (when doc (namestring doc)))
+                      (list "findings"
+                            (mapcar (lambda (f)
+                                      (list (list "id" (getf f :id))
+                                            (list "task" (getf f :task))
+                                            (list "status" (symbol-name (getf f :status)))
+                                            (list "issue-status"
+                                                  (when (getf f :issue-status)
+                                                    (string-downcase
+                                                     (symbol-name (getf f :issue-status)))))))
+                                    findings))
+                      (list "summary" (list (list "ok" (getf summary :ok))
+                                            (list "stale" (getf summary :stale))
+                                            (list "missing" (getf summary :missing))
+                                            (list "orphan" (getf summary :orphan))))
+                      (list "healthy" healthy))
+                :pretty t))
+       (if healthy 0 1)))))
