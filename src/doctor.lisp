@@ -1,5 +1,14 @@
 (in-package :beadwork)
 
+(defun extract-bw-id (text)
+  "Extract a bw issue ID from TEXT. Returns the ID string if TEXT is exactly
+a valid bw ID (bd-<alphanumeric>), or NIL if not.
+Examples: \"bd-0lg\" → \"bd-0lg\", \"—\" → NIL, \"note f9efe052\" → NIL."
+  (when text
+    (let ((trimmed (string-trim " " text)))
+      (when (ppcre:scan "^bd-[a-z0-9]+$" trimmed)
+        trimmed))))
+
 (defun parse-whats-next-table (lines)
   "Parse the What's Next markdown table from LINES (list of strings).
 Returns a list of rows, each a list of (priority task beadwork-id).

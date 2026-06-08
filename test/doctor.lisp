@@ -47,3 +47,17 @@
                  "## Known Issues"))
          (rows (beadwork::parse-whats-next-table lines)))
     (is = 0 (length rows))))
+
+(define-test extracts-bw-ids
+  :parent doctor-suite
+  ;; Valid bw IDs
+  (is equal "bd-0lg" (beadwork::extract-bw-id "bd-0lg"))
+  (is equal "bd-abc" (beadwork::extract-bw-id "bd-abc"))
+  (is equal "bd-iq1" (beadwork::extract-bw-id "bd-iq1"))
+  ;; Non-bw-ID values return nil
+  (is equal nil (beadwork::extract-bw-id "—"))
+  (is equal nil (beadwork::extract-bw-id "note `f9efe052`"))
+  (is equal nil (beadwork::extract-bw-id ""))
+  (is equal nil (beadwork::extract-bw-id "N/A"))
+  ;; Embedded ID in text returns nil (strict match)
+  (is equal nil (beadwork::extract-bw-id "see bd-abc for details")))
