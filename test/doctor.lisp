@@ -48,6 +48,38 @@
          (rows (beadwork::parse-whats-next-table lines)))
     (is = 0 (length rows))))
 
+(define-test classifies-rows-against-db
+  :parent doctor-suite
+  ;; Create a temp in-memory store with known issues
+  (let* ((store (beadwork::open-store ":memory:"))
+         (issue (beadwork::create-issue store
+                  :title "Test issue"
+                  :type :task
+                  :priority 1)))
+    (let ((issue-id (beadwork::issue-id issue)))
+      ;; Row with existing open issue → OK
+      (let ((result (beadwork::classify-row
+                     (list "P1" "Test issue" issue-id) store)))
+        (is equal :ok (getf result :status))
+        (is equal issue-id (getf result :id)))
+      ;; Close it, then row should be STALE
+      (beadwork::close-issue store issue-id :reason "done")
+      (let ((result (beadwork::classify-row
+                     (list "P1" "Test issue" issue-id) store)))
+        (is equal :stale (getf result :status))
+        (is equal issue-id (getf result :id)))
+      ;; Row with non-existent ID → MISSING
+      (let ((result (beadwork::classify-row
+                     (list "P1" "Ghost" "bd-zzz") store)))
+        (is equal :missing (getf result :status))
+        (is equal "bd-zzz" (getf result :id)))
+      ;; Row with no valid bw ID → ORPHAN
+      (let ((result (beadwork::classify-row
+                     (list "P1" "No ID" "—") store)))
+        (is equal :orphan (getf result :status))
+        (is equal nil (getf result :id))))
+    (beadwork::close-store store)))
+
 (define-test extracts-bw-ids
   :parent doctor-suite
   ;; Valid bw IDs

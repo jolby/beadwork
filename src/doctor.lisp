@@ -9,6 +9,38 @@ Examples: \"bd-0lg\" → \"bd-0lg\", \"—\" → NIL, \"note f9efe052\" → NIL.
       (when (ppcre:scan "^bd-[a-z0-9]+$" trimmed)
         trimmed))))
 
+(defun classify-row (row store)
+  "Classify a parsed What's Next ROW against the beadwork STORE.
+ROW is a list (priority task id-text).
+Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
+:id (string or nil), :task (string), and :issue-status (keyword or nil)."
+  (destructuring-bind (priority task id-text) row
+    (declare (ignore priority))
+    (let ((bw-id (extract-bw-id id-text)))
+      (if bw-id
+          ;; Has a valid bw ID — check existence and status
+          (handler-case
+              (let ((issue (get-issue store bw-id)))
+                (if (member (issue-status issue) '(:closed :tombstone))
+                    (list :status :stale
+                          :id bw-id
+                          :task task
+                          :issue-status (issue-status issue))
+                    (list :status :ok
+                          :id bw-id
+                          :task task
+                          :issue-status (issue-status issue))))
+            (issue-not-found ()
+              (list :status :missing
+                    :id bw-id
+                    :task task
+                    :issue-status nil)))
+          ;; No valid bw ID — orphan
+          (list :status :orphan
+                :id nil
+                :task task
+                :issue-status nil)))))
+
 (defun parse-whats-next-table (lines)
   "Parse the What's Next markdown table from LINES (list of strings).
 Returns a list of rows, each a list of (priority task beadwork-id).
