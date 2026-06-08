@@ -24,6 +24,7 @@
                  (:file "storage")
                  (:file "sync")
                  (:file "id")
+                 (:file "doctor")
                  (:file "cli"))))
   :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
 
@@ -37,6 +38,7 @@
                  (:file "suite")
                  (:file "base")
                  (:file "timestamp")
-                 (:file "sync"))))
+                 (:file "sync")
+                 (:file "doctor"))))
   :perform (asdf:test-op (op c)
                     (uiop:symbol-call :parachute :test :beadwork/tests)))
