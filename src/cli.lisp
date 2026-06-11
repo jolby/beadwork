@@ -62,6 +62,34 @@
 ;;; Output Formatting
 ;;; ---------------------------------------------------------------------------
 
+;;; ANSI helpers
+
+(defparameter *ansi-reset*  (format nil "~C[0m" #\Esc))
+(defparameter *ansi-bold*   (format nil "~C[1m" #\Esc))
+(defparameter *ansi-red*    (format nil "~C[31m" #\Esc))
+(defparameter *ansi-green*  (format nil "~C[32m" #\Esc))
+(defparameter *ansi-yellow* (format nil "~C[33m" #\Esc))
+(defparameter *ansi-cyan*   (format nil "~C[36m" #\Esc))
+(defparameter *ansi-dim*    (format nil "~C[2m" #\Esc))
+
+(defun color-status (status)
+  "Return ANSI-colored status string."
+  (let ((s (string-upcase (symbol-name status))))
+    (cond
+      ((eq status :in-progress) (concatenate 'string *ansi-green* s *ansi-reset*))
+      ((eq status :blocked)    (concatenate 'string *ansi-red* s *ansi-reset*))
+      ((eq status :deferred)   (concatenate 'string *ansi-yellow* s *ansi-reset*))
+      (t s))))
+
+(defun color-priority (p)
+  "Return ANSI-colored priority string."
+  (let ((s (format-priority p)))
+    (cond
+      ((= p 1) (concatenate 'string *ansi-bold* *ansi-red* s *ansi-reset*))
+      ((= p 2) (concatenate 'string *ansi-yellow* s *ansi-reset*))
+      ((= p 0) (concatenate 'string *ansi-bold* *ansi-red* "!!" s *ansi-reset*))
+      (t s))))
+
 (defun format-issue-plain (issue)
   "Format ISSUE as plain text line."
   (format nil "[~A] [~A] [~A] ~A  ~A"
@@ -71,14 +99,15 @@
           (or (issue-source-repo issue) ".")
           (issue-title issue)))
 
-(defun format-issue-rich (issue)
-  "Format ISSUE for terminal display."
-  (let* ((status (issue-status issue))
-         (status-str (string-upcase (symbol-name status))))
-    (format nil "[~A] ~A ~A  ~A"
-            status-str
-            (format-priority (issue-priority issue))
-            (or (issue-source-repo issue) ".")
+(defun format-issue-rich (issue index)
+  "Format ISSUE for terminal display with color-coded status and priority."
+  (let ((status (issue-status issue))
+        (repo (or (issue-source-repo issue) ".")))
+    (format nil "~3D. [~A] ~A  ~A  ~A"
+            index
+            (color-status status)
+            (color-priority (issue-priority issue))
+            repo
             (issue-title issue))))
 
 (defun print-issues (issues)
@@ -90,8 +119,9 @@
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
     (:rich
-     (dolist (issue issues)
-       (format t "~A~%" (format-issue-rich issue))))))
+     (loop for issue in issues
+           for i from 1
+           do (format t "~A~%" (format-issue-rich issue i))))))
 
 (defun print-issue-single (issue)
   "Print a single issue in detail."
@@ -238,8 +268,8 @@
            (issues (ready-issues store :source-repo source-repo)))
       (unless (eq *format* :json)
         (if source-repo
-            (format t "📋 Ready work for ~A (~D issues):~%~%" source-repo (length issues))
-            (format t "📋 Ready work (~D issues):~%~%" (length issues))))
+            (format t "Ready work for ~A (~D issues):~%~%" source-repo (length issues))
+            (format t "Ready work (~D issues):~%~%" (length issues))))
       (print-issues issues))))
 
 (defun ready/command ()
