@@ -109,19 +109,21 @@
           (or (issue-source-repo issue) ".")
           (issue-title issue)))
 
-(defun format-issue-rich (issue index status-w pri-w repo-w)
+(defun format-issue-rich (issue status-w pri-w type-w repo-w)
   "Format ISSUE for terminal display with aligned columns and color."
   (let* ((status (issue-status issue))
          (repo (or (issue-source-repo issue) "."))
-         (idx-str (format nil "~3D" index))
+         (id-str (issue-id issue))
          (status-str (color-status status))
          (pri-str (color-priority (issue-priority issue)))
+         (type-str (string-downcase (symbol-name (issue-type issue))))
          (repo-str repo)
          (title-str (issue-title issue)))
-    (format nil "~A  ~A  ~A  ~A  ~A"
-            idx-str
+    (format nil "~A  ~A  ~A  ~A  ~A  ~A"
+            (pad-right id-str 12)
             (pad-right status-str status-w)
             (pad-right pri-str pri-w)
+            (pad-right type-str type-w)
             (pad-right repo-str repo-w)
             title-str)))
 
@@ -134,7 +136,8 @@
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
     (:rich
-     (let* ((status-w (max 6 (reduce #'max (mapcar (lambda (i)
+     (let* ((id-w 12)
+            (status-w (max 6 (reduce #'max (mapcar (lambda (i)
                                                       (visible-length
                                                        (color-status (issue-status i))))
                                                     issues)
@@ -144,27 +147,36 @@
                                                     (color-priority (issue-priority i))))
                                                  issues)
                                    :initial-value 0)))
+            (type-w (max 4 (reduce #'max (mapcar (lambda (i)
+                                                    (length (string-downcase
+                                                             (symbol-name (issue-type i)))))
+                                                  issues)
+                                    :initial-value 0)))
             (repo-w (max 4 (reduce #'max (mapcar (lambda (i)
                                                     (length (or (issue-source-repo i) ".")))
                                                   issues)
                                     :initial-value 0))))
        ;; Header
-       (format t "~3A  ~A  ~A  ~A  ~A~%"
-               "#"
+       (format t "~A  ~A  ~A  ~A  ~A  ~A~%"
+               (pad-right "ID" id-w)
                (pad-right "STATUS" status-w)
                (pad-right "PRI" pri-w)
+               (pad-right "TYPE" type-w)
                (pad-right "REPO" repo-w)
                "TITLE")
-       (let ((status-underline (make-string status-w :initial-element #\-))
+       (let ((id-underline (make-string id-w :initial-element #\-))
+             (status-underline (make-string status-w :initial-element #\-))
              (pri-underline (make-string pri-w :initial-element #\-))
+             (type-underline (make-string type-w :initial-element #\-))
              (repo-underline (make-string repo-w :initial-element #\-)))
-         (format t "~3A  ~A  ~A  ~A  ~A~%"
-                 "---" status-underline pri-underline repo-underline "-----"))
+         (format t "~A  ~A  ~A  ~A  ~A  ~A~%"
+                 id-underline status-underline pri-underline
+                 type-underline repo-underline "-----"))
        ;; Rows
        (loop for issue in issues
-             for i from 1
              do (format t "~A~%"
-                        (format-issue-rich issue i status-w pri-w repo-w)))))))
+                        (format-issue-rich issue
+                                           status-w pri-w type-w repo-w)))))))
 
 (defun print-issue-single (issue)
   "Print a single issue in detail."
