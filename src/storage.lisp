@@ -18,18 +18,33 @@
   "local-time format list producing RFC 3339 timestamps for SQLite storage.")
 
 (defun %clip-nsec (ts-str)
-  "Clip nanosecond precision (9+ digits) to microsecond (6 digits).
-local-time always emits 9+ fractional digits regardless of (:nsec N).
-Handles both ±HHMM (bw) and ±HH:MM (br) timezone offset formats."
+  "Clip nanosecond precision (9+ digits) to microsecond (6 digits)
+and normalize timezone offset to ±HH:MM format with colon for RFC 3339.
+local-time always emits 9+ fractional digits regardless of (:nsec N)."
   (let* ((dot-pos (position #\. ts-str))
-         (sign-pos (or (position #\+ ts-str :start dot-pos)
-                        (position #\- ts-str :start dot-pos))))
-    (if (and dot-pos sign-pos)
-        (concatenate 'string
-                     (subseq ts-str 0 (1+ dot-pos))   ; "...HH:MM:SS."
-                     (subseq ts-str (1+ dot-pos) (+ dot-pos 7))  ; 6 fractional digits
-                     (subseq ts-str sign-pos))         ; offset from sign onwards
-        ts-str)))
+         (sign-pos (when dot-pos
+                     (or (position #\+ ts-str :start dot-pos)
+                         (position #\- ts-str :start dot-pos)))))
+    (if (not dot-pos)
+        ts-str
+        ;; Build: YYYY-MM-DDTHH:MM:SS + 6 fractional digits + normalized offset
+        (let* ((prefix (subseq ts-str 0 (1+ dot-pos)))
+               (fraction (subseq ts-str (1+ dot-pos)
+                                 (min (+ dot-pos 7) (or sign-pos (length ts-str)))))
+               (offset (when sign-pos (subseq ts-str sign-pos))))
+          ;; Pad fraction to 6 digits if needed
+          (let ((fraction-padded (if (< (length fraction) 6)
+                                     (concatenate 'string fraction
+                                                  (make-string (- 6 (length fraction))
+                                                               :initial-element #\0))
+                                     fraction)))
+            (if offset
+                ;; Insert colon: +0000 → +00:00, -0700 → -07:00
+                (if (= 5 (length offset))
+                    (concatenate 'string prefix fraction-padded
+                                 (subseq offset 0 3) ":" (subseq offset 3))
+                    (concatenate 'string prefix fraction-padded offset))
+                (concatenate 'string prefix fraction-padded)))))))
 
 (defun format-timestamp (timestamp)
   "Format a local-time TIMESTAMP as an RFC 3339 string with microsecond precision."
@@ -64,12 +79,53 @@ Returns NIL if STRING is NIL or empty."
 ;;; Open / Close / with-store
 ;;; ---------------------------------------------------------------------------
 
+(defun %normalize-timestamps (db)
+  "Normalize all datetime columns to microsecond-precision RFC 3339 UTC.
+Fixes historical timestamps that have nanosecond precision or ±HHMM offsets
+which br's Rust chrono parser cannot handle."
+  (handler-case
+      (let ((rows (sqlite:execute-to-list db
+                    "SELECT id, created_at, updated_at, closed_at,
+                            due_at, defer_until, deleted_at, compacted_at
+                     FROM issues")))
+        (dolist (row rows)
+          (destructuring-bind (id created-at updated-at closed-at
+                               due-at defer-until deleted-at compacted-at)
+              row
+            (let ((updates nil))
+              (flet ((needs-normalize (val label)
+                       (let ((ts (when (and val (plusp (length val)))
+                                   (parse-timestamp val))))
+                         (when ts
+                           (let ((formatted (format-timestamp-utc ts)))
+                             (unless (string= val formatted)
+                               (push (list label formatted) updates)))))))
+                (needs-normalize created-at "created_at")
+                (needs-normalize updated-at "updated_at")
+                (needs-normalize closed-at "closed_at")
+                (needs-normalize due-at "due_at")
+                (needs-normalize defer-until "defer_until")
+                (needs-normalize deleted-at "deleted_at")
+                (needs-normalize compacted-at "compacted_at"))
+              (when updates
+                (let* ((set-clauses
+                         (format nil "~{~A = ?~^, ~}"
+                                 (mapcar #'first updates)))
+                       (vals (mapcar #'second updates)))
+                  (apply #'sqlite:execute-non-query db
+                         (format nil "UPDATE issues SET ~A WHERE id = ?"
+                                 set-clauses)
+                         (append vals (list id)))))))))
+    (error () nil)))
+
 (defun open-store (path &key (prefix "bd"))
   "Create a store, connect to SQLite at PATH, apply schema. Returns store instance."
   (let* ((store (make-instance 'store :db-path path :prefix prefix))
          (db (sqlite:connect path)))
     (setf (store-db store) db)
     (apply-schema db)
+    ;; Normalize historical timestamps for br interop
+    (%normalize-timestamps db)
     store))
 
 (defun close-store (store)

@@ -64,19 +64,21 @@
 
 (defun format-issue-plain (issue)
   "Format ISSUE as plain text line."
-  (format nil "[~A] [~A] [~A] ~A"
+  (format nil "[~A] [~A] [~A] ~A  ~A"
           (issue-id issue)
           (format-priority (issue-priority issue))
           (issue-type-string (issue-type issue))
+          (or (issue-source-repo issue) ".")
           (issue-title issue)))
 
 (defun format-issue-rich (issue)
   "Format ISSUE for terminal display."
   (let* ((status (issue-status issue))
          (status-str (string-upcase (symbol-name status))))
-    (format nil "[~A] ~A ~A"
+    (format nil "[~A] ~A ~A  ~A"
             status-str
             (format-priority (issue-priority issue))
+            (or (issue-source-repo issue) ".")
             (issue-title issue))))
 
 (defun print-issues (issues)
