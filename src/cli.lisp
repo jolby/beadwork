@@ -134,20 +134,20 @@
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
     (:rich
-     (let* ((status-w (reduce #'max (mapcar (lambda (i)
-                                              (visible-length
-                                               (color-status (issue-status i))))
-                                            issues)
-                              :initial-value 6))
-            (pri-w (reduce #'max (mapcar (lambda (i)
-                                           (visible-length
-                                            (color-priority (issue-priority i))))
-                                         issues)
-                           :initial-value 2))
-            (repo-w (reduce #'max (mapcar (lambda (i)
-                                            (length (or (issue-source-repo i) ".")))
-                                          issues)
-                            :initial-value 4)))
+     (let* ((status-w (max 6 (reduce #'max (mapcar (lambda (i)
+                                                      (visible-length
+                                                       (color-status (issue-status i))))
+                                                    issues)
+                                      :initial-value 0)))
+            (pri-w (max 3 (reduce #'max (mapcar (lambda (i)
+                                                   (visible-length
+                                                    (color-priority (issue-priority i))))
+                                                 issues)
+                                   :initial-value 0)))
+            (repo-w (max 4 (reduce #'max (mapcar (lambda (i)
+                                                    (length (or (issue-source-repo i) ".")))
+                                                  issues)
+                                    :initial-value 0))))
        ;; Header
        (format t "~3A  ~A  ~A  ~A  ~A~%"
                "#"
@@ -155,9 +155,9 @@
                (pad-right "PRI" pri-w)
                (pad-right "REPO" repo-w)
                "TITLE")
-       (let ((status-underline (make-string (max 6 status-w) :initial-element #\-))
-             (pri-underline (make-string (max 3 pri-w) :initial-element #\-))
-             (repo-underline (make-string (max 4 repo-w) :initial-element #\-)))
+       (let ((status-underline (make-string status-w :initial-element #\-))
+             (pri-underline (make-string pri-w :initial-element #\-))
+             (repo-underline (make-string repo-w :initial-element #\-)))
          (format t "~3A  ~A  ~A  ~A  ~A~%"
                  "---" status-underline pri-underline repo-underline "-----"))
        ;; Rows
