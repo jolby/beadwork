@@ -72,6 +72,16 @@
 (defparameter *ansi-cyan*   (format nil "~C[36m" #\Esc))
 (defparameter *ansi-dim*    (format nil "~C[2m" #\Esc))
 
+(defun visible-length (s)
+  "Return the visible character length, stripping ANSI escape sequences."
+  (length (cl-ppcre:regex-replace-all "\\e\\[[0-9;]*m" s "")))
+
+(defun pad-right (s width)
+  "Right-pad S with spaces to at least WIDTH visible characters."
+  (let* ((vlen (visible-length s))
+         (pad (max 0 (- width vlen))))
+    (concatenate 'string s (make-string pad :initial-element #\Space))))
+
 (defun color-status (status)
   "Return ANSI-colored status string."
   (let ((s (string-upcase (symbol-name status))))
@@ -99,16 +109,21 @@
           (or (issue-source-repo issue) ".")
           (issue-title issue)))
 
-(defun format-issue-rich (issue index)
-  "Format ISSUE for terminal display with color-coded status and priority."
-  (let ((status (issue-status issue))
-        (repo (or (issue-source-repo issue) ".")))
-    (format nil "~3D. [~A] ~A  ~A  ~A"
-            index
-            (color-status status)
-            (color-priority (issue-priority issue))
-            repo
-            (issue-title issue))))
+(defun format-issue-rich (issue index status-w pri-w repo-w)
+  "Format ISSUE for terminal display with aligned columns and color."
+  (let* ((status (issue-status issue))
+         (repo (or (issue-source-repo issue) "."))
+         (idx-str (format nil "~3D" index))
+         (status-str (color-status status))
+         (pri-str (color-priority (issue-priority issue)))
+         (repo-str repo)
+         (title-str (issue-title issue)))
+    (format nil "~A  ~A  ~A  ~A  ~A"
+            idx-str
+            (pad-right status-str status-w)
+            (pad-right pri-str pri-w)
+            (pad-right repo-str repo-w)
+            title-str)))
 
 (defun print-issues (issues)
   "Print a list of issues according to *format*."
@@ -119,9 +134,33 @@
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
     (:rich
-     (loop for issue in issues
-           for i from 1
-           do (format t "~A~%" (format-issue-rich issue i))))))
+     (let* ((status-w (reduce #'max (mapcar (lambda (i)
+                                              (visible-length
+                                               (color-status (issue-status i))))
+                                            issues)
+                              :initial-value 6))
+            (pri-w (reduce #'max (mapcar (lambda (i)
+                                           (visible-length
+                                            (color-priority (issue-priority i))))
+                                         issues)
+                           :initial-value 2))
+            (repo-w (reduce #'max (mapcar (lambda (i)
+                                            (length (or (issue-source-repo i) ".")))
+                                          issues)
+                            :initial-value 4)))
+       ;; Header
+       (format t "~3A  ~VA  ~VA  ~VA  ~A~%"
+               "#" status-w "STATUS" pri-w "PRI" repo-w "REPO" "TITLE")
+       (let ((status-underline (make-string (max 6 status-w) :initial-element #\-))
+             (pri-underline (make-string (max 3 pri-w) :initial-element #\-))
+             (repo-underline (make-string (max 4 repo-w) :initial-element #\-)))
+         (format t "~3A  ~A  ~A  ~A  ~A~%"
+                 "---" status-underline pri-underline repo-underline "-----"))
+       ;; Rows
+       (loop for issue in issues
+             for i from 1
+             do (format t "~A~%"
+                        (format-issue-rich issue i status-w pri-w repo-w)))))))
 
 (defun print-issue-single (issue)
   "Print a single issue in detail."
