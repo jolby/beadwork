@@ -504,13 +504,20 @@
 ;;; Command: dep (subcommands)
 ;;; ---------------------------------------------------------------------------
 
+(defun dep-add/options ()
+  (list
+   (clingon:make-option :string
+     :long-name "blocks-on"
+     :description "Issue ID that the child issue blocks on (parent ID)"
+     :key :blocks-on)))
+
 (defun dep-add/handler (cmd)
   (let* ((store (ensure-store))
          (args (clingon:command-arguments cmd))
          (child (first args))
-         (parent (second args)))
+         (parent (or (clingon:getopt cmd :blocks-on) (second args))))
     (unless (and child parent)
-      (format *error-output* "Usage: bw dep add <child-id> <parent-id>~%")
+      (format *error-output* "Usage: bw dep add <child-id> [--blocks-on <parent-id>]~%")
       (clingon:exit 1))
     (add-dependency store child parent)
     (format t "Added dependency: ~A blocks ~A~%" child parent)))
@@ -519,8 +526,9 @@
   (clingon:make-command
    :name "add"
    :description "Add a dependency"
+   :options (dep-add/options)
    :handler #'dep-add/handler
-   :usage "<child-id> <parent-id>"))
+   :usage "<child-id> [--blocks-on <parent-id>]"))
 
 (defun dep-remove/handler (cmd)
   (let* ((store (ensure-store))
