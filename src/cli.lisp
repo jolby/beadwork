@@ -149,8 +149,12 @@
                                           issues)
                             :initial-value 4)))
        ;; Header
-       (format t "~3A  ~VA  ~VA  ~VA  ~A~%"
-               "#" status-w "STATUS" pri-w "PRI" repo-w "REPO" "TITLE")
+       (format t "~3A  ~A  ~A  ~A  ~A~%"
+               "#"
+               (pad-right "STATUS" status-w)
+               (pad-right "PRI" pri-w)
+               (pad-right "REPO" repo-w)
+               "TITLE")
        (let ((status-underline (make-string (max 6 status-w) :initial-element #\-))
              (pri-underline (make-string (max 3 pri-w) :initial-element #\-))
              (repo-underline (make-string (max 4 repo-w) :initial-element #\-)))
