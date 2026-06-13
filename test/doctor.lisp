@@ -37,6 +37,42 @@
          (rows (beadwork::parse-whats-next-table lines)))
     (is = 0 (length rows))))
 
+(define-test parses-whats-next-numbered-list
+  :parent doctor-suite
+  (let* ((lines '("## What's Next"
+                 ""
+                 "1. Signal handlers: SIGWINCH (bd-szn.5)"
+                 "2. Dogfood the TUI (bd-szn.6)"
+                 "3. Editor cursor polish"
+                 ""))
+         (rows (beadwork::parse-whats-next-table lines)))
+    (is = 3 (length rows))
+    ;; Row 1: has embedded bw ID
+    (is equal "—" (first (first rows)))
+    (is equal "Signal handlers: SIGWINCH (bd-szn.5)" (second (first rows)))
+    (is equal "bd-szn" (third (first rows)))
+    ;; Row 2: has embedded bw ID with parens
+    (is equal "—" (first (second rows)))
+    (is equal "Dogfood the TUI (bd-szn.6)" (second (second rows)))
+    (is equal "bd-szn" (third (second rows)))
+    ;; Row 3: no ID
+    (is equal "—" (first (third rows)))
+    (is equal "Editor cursor polish" (second (third rows)))
+    (is equal "" (third (third rows)))))
+
+(define-test parses-whats-next-org-mode-heading
+  :parent doctor-suite
+  (let* ((lines '("* What's Next"
+                 ""
+                 "1. Do the thing"
+                 "2. Fix the other thing (bd-abc)"
+                 ""))
+         (rows (beadwork::parse-whats-next-table lines)))
+    (is = 2 (length rows))
+    (is equal "Do the thing" (second (first rows)))
+    (is equal "Fix the other thing (bd-abc)" (second (second rows)))
+    (is equal "bd-abc" (third (second rows)))))
+
 (define-test parse-whats-next-table-empty
   :parent doctor-suite
   (let* ((lines '("## What's Next"
@@ -82,7 +118,7 @@
 
 (define-test extracts-bw-ids
   :parent doctor-suite
-  ;; Valid bw IDs
+  ;; Exact bw IDs
   (is equal "bd-0lg" (beadwork::extract-bw-id "bd-0lg"))
   (is equal "bd-abc" (beadwork::extract-bw-id "bd-abc"))
   (is equal "bd-iq1" (beadwork::extract-bw-id "bd-iq1"))
@@ -91,8 +127,10 @@
   (is equal nil (beadwork::extract-bw-id "note `f9efe052`"))
   (is equal nil (beadwork::extract-bw-id ""))
   (is equal nil (beadwork::extract-bw-id "N/A"))
-  ;; Embedded ID in text returns nil (strict match)
-  (is equal nil (beadwork::extract-bw-id "see bd-abc for details")))
+  ;; Embedded IDs in text now extracted
+  (is equal "bd-abc" (beadwork::extract-bw-id "see bd-abc for details"))
+  (is equal "bd-szn" (beadwork::extract-bw-id "Signal handlers: SIGWINCH (bd-szn.5)"))
+  (is equal "bd-ayh" (beadwork::extract-bw-id "Fix the bd-ayh issue")))
 
 (define-test finds-latest-status-doc
   :parent doctor-suite
