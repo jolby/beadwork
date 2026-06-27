@@ -109,11 +109,14 @@
                      (list "P1" "Ghost" "bd-zzz") store)))
         (is equal :missing (getf result :status))
         (is equal "bd-zzz" (getf result :id)))
-      ;; Row with no valid bw ID → ORPHAN
+      ;; Row with no valid bw ID → ORPHAN (gets a generated pseudo-ID)
       (let ((result (beadwork::classify-row
-                     (list "P1" "No ID" "—") store)))
+                     (list "P1" "No ID" "—") store
+                     :doc-path #P"test-status.md")))
         (is equal :orphan (getf result :status))
-        (is equal nil (getf result :id))))
+        (true (getf result :id))
+        (true (ppcre:scan "^orph-" (getf result :id)))
+        (is equal "test-status.md" (getf result :source))))
     (beadwork::close-store store)))
 
 (define-test extracts-bw-ids
@@ -170,7 +173,7 @@
   (let* ((findings (list (list :status :ok :id "bd-abc" :task "Fix bug" :issue-status :open)
                          (list :status :stale :id "bd-xyz" :task "Done thing" :issue-status :closed)
                          (list :status :missing :id "bd-zzz" :task "Ghost" :issue-status nil)
-                         (list :status :orphan :id nil :task "No ID task" :issue-status nil)))
+                         (list :status :orphan :id "orph-1A2B3C4" :task "No ID task" :source "test.md" :issue-status nil)))
          (summary (list :ok 1 :stale 1 :missing 1 :orphan 1))
          (result (list :status-doc #P"test.md"
                        :findings findings

@@ -15,11 +15,19 @@ Examples: \"bd-0lg\" → \"bd-0lg\", \"(bd-szn.5)\" → \"bd-szn.5\", \"—\" �
               (".*?(bd-[a-z0-9]+)" trimmed)
             id)))))
 
-(defun classify-row (row store)
+(defun orphan-id (doc-namestring task)
+  "Generate a stable pseudo-ID for an orphan task.
+Uses a hash of the document path + task text, truncated to 7 hex chars."
+  (let ((hash (format nil "~36R" (sxhash (concatenate 'string doc-namestring task)))))
+    (format nil "orph-~A" (subseq hash (max 0 (- (length hash) 7))))))
+
+(defun classify-row (row store &key doc-path)
   "Classify a parsed What's Next ROW against the beadwork STORE.
 ROW is a list (priority task id-text).
+DOC-PATH is the status document pathname (for generating orphan IDs).
 Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
-:id (string or nil), :task (string), and :issue-status (keyword or nil)."
+:id (string or nil), :task (string), :source (string), and
+:issue-status (keyword or nil)."
   (destructuring-bind (priority task id-text) row
     (declare (ignore priority))
     (let ((bw-id (extract-bw-id id-text)))
@@ -41,11 +49,14 @@ Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
                     :id bw-id
                     :task task
                     :issue-status nil)))
-          ;; No valid bw ID — orphan
-          (list :status :orphan
-                :id nil
-                :task task
-                :issue-status nil)))))
+          ;; No valid bw ID — orphan: generate a stable pseudo-ID
+          (let* ((doc-str (if doc-path (file-namestring doc-path) "unknown"))
+                 (oid (orphan-id doc-str task)))
+            (list :status :orphan
+                  :id oid
+                  :task task
+                  :source doc-str
+                  :issue-status nil))))))
 
 (defun parse-whats-next-table (lines)
   "Parse the What's Next section from LINES (list of strings).
@@ -128,7 +139,7 @@ plists), and :summary (plist with :ok, :stale, :missing, :orphan counts)."
     (let* ((lines (uiop:read-file-lines doc))
            (rows (parse-whats-next-table lines)))
       (if rows
-          (let* ((findings (mapcar (lambda (row) (classify-row row store)) rows))
+          (let* ((findings (mapcar (lambda (row) (classify-row row store :doc-path doc)) rows))
                  (ok (count :ok findings :key (lambda (f) (getf f :status))))
                  (stale (count :stale findings :key (lambda (f) (getf f :status))))
                  (missing (count :missing findings :key (lambda (f) (getf f :status))))
@@ -143,19 +154,24 @@ plists), and :summary (plist with :ok, :stale, :missing, :orphan counts)."
                                (file-namestring doc)))))))
 
 (defun format-finding-line (finding)
-  "Format a single finding as a human-readable line."
+  "Format a single finding as a human-readable line.
+For orphans, includes the source document name."
   (let* ((status (getf finding :status))
          (id (getf finding :id))
          (task (getf finding :task))
+         (source (getf finding :source))
          (marker (ecase status
                    (:ok "OK    ")
                    (:stale "STALE ")
                    (:missing "MISS  ")
                    (:orphan "ORPHAN"))))
-    (format nil "~A ~A  ~A"
-            marker
-            (if id (format nil "~A  " id) "—        ")
-            (string-trim " " task))))
+    (if (and (eq status :orphan) source)
+        (format nil "~A ~A  ~A  [~A]"
+                marker id (string-trim " " task) source)
+        (format nil "~A ~A  ~A"
+                marker
+                (if id (format nil "~A  " id) "—        ")
+                (string-trim " " task)))))
 
 (defun report-doctor-findings (result format)
   "Print the doctor findings in FORMAT (:human or :json).
@@ -198,6 +214,7 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
                                       (list (list "id" (getf f :id))
                                             (list "task" (getf f :task))
                                             (list "status" (symbol-name (getf f :status)))
+                                            (list "source" (getf f :source))
                                             (list "issue-status"
                                                   (when (getf f :issue-status)
                                                     (string-downcase
