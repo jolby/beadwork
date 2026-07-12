@@ -221,7 +221,10 @@ Examples:
      (format t "Created: ~A~%" (format-timestamp (issue-created-at issue)))
      (format t "Updated: ~A~%" (format-timestamp (issue-updated-at issue)))
      (when (issue-description issue)
-       (format t "~%~A~%" (issue-description issue))))
+       (format t "~%~A~%" (issue-description issue)))
+     (when (and (issue-notes issue)
+                (plusp (length (issue-notes issue))))
+       (format t "~%Notes:~%  ~A~%" (issue-notes issue))))
     (:rich
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
@@ -233,7 +236,10 @@ Examples:
      (format t "Created: ~A~%" (format-timestamp (issue-created-at issue)))
      (format t "Updated: ~A~%" (format-timestamp (issue-updated-at issue)))
      (when (issue-description issue)
-       (format t "~%~A~%" (issue-description issue))))))
+       (format t "~%~A~%" (issue-description issue)))
+     (when (and (issue-notes issue)
+                (plusp (length (issue-notes issue))))
+       (format t "~%Notes:~%  ~A~%" (issue-notes issue))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Global Options
