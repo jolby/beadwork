@@ -849,24 +849,36 @@ Examples:
          (*format* (parse-format format-val))
          (store (ensure-store))
          (agent-id (clingon:getopt cmd :agent-id)))
-    ;; Show previous handoff
-    (let ((last (get-last-session store)))
-      (when last
-        (let ((ended-at (getf last :ended-at))
-              (notes (getf last :handoff-notes)))
-          (when ended-at
-            (format t "Previous session ended: ~A~%"
-                    (format-timestamp ended-at)))
-          (when (and notes (plusp (length notes)))
-            (format t "Handoff notes:~%  ~A~%~%" notes)))))
-    ;; Start new session
-    (let ((session (start-session store :agent-id agent-id)))
-      (if session
+    (let ((current (get-current-session store)))
+      (if current
+          ;; Resume existing session
           (progn
-            (format t "Session ~A started.~%" (getf session :id))
-            (when agent-id
-              (format t "Agent: ~A~%" agent-id)))
-          (format t "Session already active. Use 'bw session status' to see it.~%")))))
+            (format t "Resuming session ~A~%" (getf current :id))
+            (let ((active-id (getf current :active-issue-id)))
+              (if active-id
+                  (format t "Working on: ~A~%" active-id)
+                  (format t "Working on: (none)~%")))
+            (let ((last-action (getf current :last-action)))
+              (when (and last-action (plusp (length last-action)))
+                (format t "Last action: ~A~%" last-action))))
+          ;; No active session — show previous handoff then start new
+          (progn
+            (let ((last (get-last-session store)))
+              (when last
+                (let ((ended-at (getf last :ended-at))
+                      (notes (getf last :handoff-notes)))
+                  (when ended-at
+                    (format t "Previous session ended: ~A~%"
+                            (format-timestamp ended-at)))
+                  (when (and notes (plusp (length notes)))
+                    (format t "Handoff notes:~%  ~A~%~%" notes)))))
+            (let ((session (start-session store :agent-id agent-id)))
+              (if session
+                  (progn
+                    (format t "Session ~A started.~%" (getf session :id))
+                    (when agent-id
+                      (format t "Agent: ~A~%" agent-id)))
+                  (format t "(could not start session)~%"))))))))
 
 (defun session-start/options ()
   (list
