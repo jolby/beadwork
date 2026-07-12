@@ -111,6 +111,49 @@ bw label remove bd-123 important
 bw label list bd-123
 #+end_src
 
+**Search issues:**
+
+#+begin_src sh
+bw search "login bug"        # LIKE search on title + description
+#+end_src
+
+**Statistics:**
+
+#+begin_src sh
+bw stats                      # Aggregate counts by status, priority, type
+bw stats --format json        # JSON for programmatic use
+#+end_src
+
+**Session management:**
+
+#+begin_src sh
+bw session start               # Create or resume session (shows handoff)
+bw session status              # Active issue, uptime, last breadcrumb
+bw session work bd-123        # Set active issue for this session
+bw session action "Found root cause"  # Breadcrumb (auto-comments)
+bw session end --notes "Next: dark mode"  # End with handoff
+#+end_src
+
+**Comments:**
+
+#+begin_src sh
+bw comment add bd-123 "Fixed the token refresh"
+bw comment list bd-123
+#+end_src
+
+**Delete issues:**
+
+#+begin_src sh
+bw delete bd-123              # Confirms before deleting
+bw delete bd-123 -f           # Skip confirmation
+#+end_src
+
+**Blocked issues:**
+
+#+begin_src sh
+bw blocked                     # Issues blocked by unclosed dependencies
+#+end_src
+
 **Sync (JSONL import/export):**
 
 #+begin_src sh
