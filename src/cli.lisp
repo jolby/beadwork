@@ -773,6 +773,71 @@ Examples:
                        (label-list/command))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Command: comment (subcommands)
+;;; ---------------------------------------------------------------------------
+
+(defun comment-add/handler (cmd)
+  (let* ((store (ensure-store))
+         (args (clingon:command-arguments cmd))
+         (issue-id (first args))
+         (text (second args)))
+    (unless (and issue-id text)
+      (format *error-output* "Usage: bw comment add <issue-id> <text>~%")
+      (clingon:exit 1))
+    (add-comment store issue-id "[cli]" text)
+    (format t "Added comment to ~A~%" issue-id)))
+
+(defun comment-add/command ()
+  (clingon:make-command
+   :name "add"
+   :description "Add a comment to an issue"
+   :handler #'comment-add/handler
+   :usage "<issue-id> <text>"))
+
+(defun comment-list/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (issue-id (first (clingon:command-arguments cmd))))
+    (unless issue-id
+      (format *error-output* "Usage: bw comment list <issue-id>~%")
+      (clingon:exit 1))
+    (let ((comments (list-comments store issue-id)))
+      (if (eq *format* :json)
+          (format t "~A" (jzon:stringify
+                          (mapcar (lambda (c)
+                                    (list (list "id" (comment-id c))
+                                          (list "author" (comment-author c))
+                                          (list "body" (comment-body c))
+                                          (list "created-at" (format-timestamp
+                                                               (comment-created-at c)))))
+                                  comments)
+                          :pretty t))
+          (progn
+            (format t "Comments for ~A (~D):~%" issue-id (length comments))
+            (dolist (c comments)
+              (format t "  [~A] ~A: ~A~%"
+                      (format-timestamp (comment-created-at c))
+                      (comment-author c)
+                      (comment-body c))))))))
+
+(defun comment-list/command ()
+  (clingon:make-command
+   :name "list"
+   :description "List comments for an issue"
+   :aliases '("ls")
+   :options (global-options)
+   :handler #'comment-list/handler
+   :usage "<issue-id>"))
+
+(defun comment/command ()
+  (clingon:make-command
+   :name "comment"
+   :description "Manage issue comments"
+   :sub-commands (list (comment-add/command)
+                       (comment-list/command))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Command: search
 ;;; ---------------------------------------------------------------------------
 
@@ -1219,6 +1284,7 @@ Examples:
                        (search/command)
                        (stats/command)
                        (label/command)
+                       (comment/command)
                        (session/command)
                        (doctor/command)
                        (init/command)
