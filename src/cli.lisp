@@ -32,10 +32,37 @@
       (let ((beads (merge-pathnames ".beads/" dir)))
         (when (probe-file beads)
           (return beads))
-        (let ((parent (uiop:pathname-directory-pathname dir)))
-          (when (equal parent dir)
+        (let ((parent (uiop:pathname-parent-directory-pathname dir)))
+          (when (or (null parent) (equal parent dir))
             (return nil))
           (setf dir parent))))))
+
+(defun detect-source-repo ()
+  "Walk up from cwd to find the nearest .git/ directory (stopping at the
+project root where .beads/ lives).  Return that directory's name as the
+source-repo.  Returns \".\" when no git repo is found before the project root.
+
+Examples:
+  repos/beadwork/src/ → finds .git at repos/beadwork/ → \"beadwork\"
+  worktrees/cogen-kb/feature/ → finds .git at worktrees/cogen-kb/ → \"cogen-kb\"
+  project root (cogen-meta/) → no .git before .beads/ → \".\""
+  (let* ((beads-dir (find-beads-dir))
+         (project-root (when beads-dir
+                         (uiop:pathname-parent-directory-pathname beads-dir)))
+         (dir (uiop:getcwd)))
+    (unless project-root
+      (return-from detect-source-repo "."))
+    (loop
+      (let ((git-dir (merge-pathnames ".git/" dir)))
+        (when (probe-file git-dir)
+          (let ((name (car (last (pathname-directory dir)))))
+            (return-from detect-source-repo
+              (if name (string-downcase name) ".")))))
+      (when (or (null dir)
+                (equal dir project-root)
+                (not (uiop:subpathp dir project-root)))
+        (return "."))
+      (setf dir (uiop:pathname-parent-directory-pathname dir)))))
 
 (defun find-db-path ()
   "Find the SQLite database path."
@@ -293,7 +320,11 @@
                   (parse-issue-type type-val)))
          (assignee (clingon:getopt cmd :assignee))
          (limit (clingon:getopt cmd :limit))
-         (source-repo (clingon:getopt cmd :source-repo)))
+         (explicit-repo (clingon:getopt cmd :source-repo))
+         (auto-repo (detect-source-repo))
+         ;; Only auto-filter by repo when in a subdirectory and no explicit --repo
+         (source-repo (or explicit-repo
+                          (unless (string= auto-repo ".") auto-repo))))
     (let ((issues (list-issues store
                                :status status
                                :priority priority
@@ -319,7 +350,10 @@
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
          (store (ensure-store)))
-    (let* ((source-repo (clingon:getopt cmd :source-repo))
+    (let* ((explicit-repo (clingon:getopt cmd :source-repo))
+           (auto-repo (detect-source-repo))
+           (source-repo (or explicit-repo
+                            (unless (string= auto-repo ".") auto-repo)))
            (issues (ready-issues store :source-repo source-repo)))
       (unless (eq *format* :json)
         (if source-repo
@@ -397,7 +431,8 @@
          (assignee (clingon:getopt cmd :assignee))
          (parent (clingon:getopt cmd :parent))
          (blocks-on (clingon:getopt cmd :blocks-on))
-         (source-repo (clingon:getopt cmd :source-repo)))
+         (source-repo (or (clingon:getopt cmd :source-repo)
+                          (detect-source-repo))))
     (let ((issue (create-issue store
                                :title title
                                :description description
@@ -738,6 +773,246 @@
                        (label-list/command))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Command: search
+;;; ---------------------------------------------------------------------------
+
+(defun search/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (query (first (clingon:command-arguments cmd))))
+    (unless query
+      (format *error-output* "Usage: bw search <query>~%")
+      (clingon:exit 1))
+    (let ((issues (search-issues store query)))
+      (print-issues issues))))
+
+(defun search/command ()
+  (clingon:make-command
+   :name "search"
+   :description "Search issues by title and description (LIKE match)"
+   :aliases '("q")
+   :options (global-options)
+   :handler #'search/handler
+   :usage "<query>"))
+
+;;; ---------------------------------------------------------------------------
+;;; Command: stats
+;;; ---------------------------------------------------------------------------
+
+(defun stats/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (stats (issue-stats store))
+         (counts-status (getf stats :counts-by-status))
+         (counts-pri (getf stats :counts-by-priority))
+         (counts-type (getf stats :counts-by-type)))
+    (if (eq *format* :json)
+        (format t "~A" (jzon:stringify stats :pretty t))
+        (progn
+          (format t "Issues: ~D total, ~D ready~%"
+                  (getf stats :total) (getf stats :ready-count))
+          (format t "Status:  ~D open, ~D in-progress, ~D blocked, ~D deferred, ~D closed~%"
+                  (getf counts-status :open)
+                  (getf counts-status :in-progress)
+                  (getf counts-status :blocked)
+                  (getf counts-status :deferred)
+                  (getf counts-status :closed))
+          (format t "Priority: P0:~D P1:~D P2:~D P3:~D P4:~D~%"
+                  (getf counts-pri :p0)
+                  (getf counts-pri :p1)
+                  (getf counts-pri :p2)
+                  (getf counts-pri :p3)
+                  (getf counts-pri :p4))
+          (format t "Type:    bug:~D feature:~D task:~D epic:~D chore:~D docs:~D~%"
+                  (getf counts-type :bug)
+                  (getf counts-type :feature)
+                  (getf counts-type :task)
+                  (getf counts-type :epic)
+                  (getf counts-type :chore)
+                  (getf counts-type :docs))))))
+
+(defun stats/command ()
+  (clingon:make-command
+   :name "stats"
+   :description "Show aggregate issue statistics"
+   :options (global-options)
+   :handler #'stats/handler))
+
+;;; ---------------------------------------------------------------------------
+;;; Command: session (subcommands)
+;;; ---------------------------------------------------------------------------
+
+(defun session-start/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (agent-id (clingon:getopt cmd :agent-id)))
+    ;; Show previous handoff
+    (let ((last (get-last-session store)))
+      (when last
+        (let ((ended-at (getf last :ended-at))
+              (notes (getf last :handoff-notes)))
+          (when ended-at
+            (format t "Previous session ended: ~A~%"
+                    (format-timestamp ended-at)))
+          (when (and notes (plusp (length notes)))
+            (format t "Handoff notes:~%  ~A~%~%" notes)))))
+    ;; Start new session
+    (let ((session (start-session store :agent-id agent-id)))
+      (if session
+          (progn
+            (format t "Session ~A started.~%" (getf session :id))
+            (when agent-id
+              (format t "Agent: ~A~%" agent-id)))
+          (format t "Session already active. Use 'bw session status' to see it.~%")))))
+
+(defun session-start/options ()
+  (list
+   (clingon:make-option
+    :string
+    :long-name "agent-id"
+    :description "Agent identifier for multi-agent tracking"
+    :key :agent-id)))
+
+(defun session-start/command ()
+  (clingon:make-command
+   :name "start"
+   :description "Start a new work session, showing previous handoff notes"
+   :options (append (session-start/options) (global-options))
+   :handler #'session-start/handler))
+
+(defun session-end/handler (cmd)
+  (let* ((store (ensure-store))
+         (notes (clingon:getopt cmd :notes))
+         (current (get-current-session store)))
+    (unless current
+      (format *error-output* "No active session.~%")
+      (clingon:exit 1))
+    (end-session store (getf current :id) :notes notes)
+    (format t "Session ~A ended.~%" (getf current :id))
+    (when notes
+      (format t "Handoff notes saved.~%"))))
+
+(defun session-end/options ()
+  (list
+   (clingon:make-option
+    :string
+    :long-name "notes"
+    :short-name #\n
+    :description "Handoff notes for the next session"
+    :key :notes)))
+
+(defun session-end/command ()
+  (clingon:make-command
+   :name "end"
+   :description "End the current session with optional handoff notes"
+   :options (append (session-end/options) (global-options))
+   :handler #'session-end/handler))
+
+(defun session-work/handler (cmd)
+  (let* ((store (ensure-store))
+         (issue-id (first (clingon:command-arguments cmd)))
+         (current (get-current-session store)))
+    (unless current
+      (format *error-output* "No active session. Use 'bw session start' first.~%")
+      (clingon:exit 1))
+    (unless issue-id
+      (format *error-output* "Usage: bw session work <issue-id>~%")
+      (clingon:exit 1))
+    ;; Verify issue exists
+    (handler-case
+        (get-issue store issue-id)
+      (issue-not-found ()
+        (format *error-output* "Issue ~A not found.~%" issue-id)
+        (clingon:exit 1)))
+    (set-session-work store (getf current :id) issue-id)
+    (format t "Now working on: ~A~%" issue-id)))
+
+(defun session-work/command ()
+  (clingon:make-command
+   :name "work"
+   :description "Set the active issue for the current session"
+   :options (global-options)
+   :handler #'session-work/handler
+   :usage "<issue-id>"))
+
+(defun session-action/handler (cmd)
+  (let* ((store (ensure-store))
+         (text (first (clingon:command-arguments cmd)))
+         (current (get-current-session store)))
+    (unless current
+      (format *error-output* "No active session. Use 'bw session start' first.~%")
+      (clingon:exit 1))
+    (unless text
+      (format *error-output* "Usage: bw session action <text>~%")
+      (clingon:exit 1))
+    (record-session-action store (getf current :id) text)
+    (format t "Action recorded: ~A~%" text)))
+
+(defun session-action/command ()
+  (clingon:make-command
+   :name "action"
+   :description "Record a breadcrumb action (survives context compression)"
+   :options (global-options)
+   :handler #'session-action/handler
+   :usage "<text>"))
+
+(defun session-status/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store))
+         (current (get-current-session store)))
+    (if current
+        (let* ((started (getf current :started-at))
+               (now (local-time:now))
+               (duration (local-time:timestamp-difference started now))
+               (minutes (max 0 (floor duration 60)))
+               (active-id (getf current :active-issue-id))
+               (last-action (getf current :last-action)))
+          (unless (eq *format* :json)
+            (format t "Session ~A (started ~A, ~D min ago)~%"
+                    (getf current :id)
+                    (format-timestamp started)
+                    minutes)
+            (if active-id
+                (format t "Working on: ~A~%" active-id)
+                (format t "Working on: (none)~%"))
+            (when (and last-action (plusp (length last-action)))
+              (format t "Last action: ~A~%" last-action)))
+          (when (eq *format* :json)
+            (format t "~A"
+                    (jzon:stringify
+                     (list (list "session-id" (getf current :id))
+                           (list "started-at" (format-timestamp started))
+                           (list "duration-minutes" minutes)
+                           (list "active-issue-id" active-id)
+                           (list "last-action" (or last-action ""))
+                           (list "agent-id" (getf current :agent-id)))
+                     :pretty t))))
+        (unless (eq *format* :json)
+          (format t "No active session. Use 'bw session start' to begin.~%")))))
+
+(defun session-status/command ()
+  (clingon:make-command
+   :name "status"
+   :description "Show current session status"
+   :aliases '("st")
+   :options (global-options)
+   :handler #'session-status/handler))
+
+(defun session/command ()
+  (clingon:make-command
+   :name "session"
+   :description "Manage work sessions for context continuity"
+   :sub-commands (list (session-start/command)
+                       (session-end/command)
+                       (session-work/command)
+                       (session-action/command)
+                       (session-status/command))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Command: init
 ;;; ---------------------------------------------------------------------------
 
@@ -929,7 +1204,10 @@
                        (close/command)
                        (reopen/command)
                        (dep/command)
+                       (search/command)
+                       (stats/command)
                        (label/command)
+                       (session/command)
                        (doctor/command)
                        (init/command)
                        (sync/command))))

@@ -600,3 +600,163 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
       (sqlite:execute-non-query
        (store-db store)
        "DELETE FROM dirty_issues")))
+
+;;; ============================================================================
+;;; Session Management
+;;; ============================================================================
+
+(defparameter *session-stale-hours* 4
+  "Hours of inactivity after which a session is considered stale.")
+
+(defun start-session (store &key agent-id agent-session-id)
+  "Create a new session. Automatically ends any stale sessions first.
+Returns a plist with session data or NIL if a session is already active."
+  (let ((db (store-db store)))
+    (auto-end-stale-sessions store)
+    (let ((current (get-current-session store)))
+      (when current
+        (return-from start-session nil)))
+    (let* ((id (generate-id "session" :prefix "S"))
+           (now-str (format-timestamp (local-time:now))))
+      (sqlite:execute-non-query
+       db
+       "INSERT INTO sessions (id, started_at, agent_id, agent_session_id)
+        VALUES (?, ?, ?, ?)"
+       id now-str (or agent-id "") (or agent-session-id ""))
+      (list :id id
+            :started-at (parse-timestamp now-str)
+            :ended-at nil
+            :active-issue-id nil
+            :handoff-notes ""
+            :last-action ""
+            :agent-id (or agent-id "")
+            :agent-session-id (or agent-session-id "")))))
+
+(defun end-session (store session-id &key notes)
+  "End session SESSION-ID, setting ended_at and handoff notes."
+  (let ((db (store-db store))
+        (now-str (format-timestamp (local-time:now))))
+    (sqlite:execute-non-query
+     db
+     "UPDATE sessions SET ended_at = ?, handoff_notes = ? WHERE id = ?"
+     now-str (or notes "") session-id)
+    (values)))
+
+(defun get-current-session (store)
+  "Return the active session as a plist, or NIL if none."
+  (let ((rows (sqlite:execute-to-list
+               (store-db store)
+               "SELECT id, started_at, ended_at, active_issue_id,
+                       handoff_notes, last_action, agent_id, agent_session_id
+                FROM sessions WHERE ended_at IS NULL
+                ORDER BY started_at DESC LIMIT 1")))
+    (when rows
+      (destructuring-bind (id started-at ended-at active-issue-id
+                           handoff-notes last-action agent-id agent-session-id)
+          (first rows)
+        (list :id id
+              :started-at (parse-timestamp started-at)
+              :ended-at (when ended-at (parse-timestamp ended-at))
+              :active-issue-id active-issue-id
+              :handoff-notes (or handoff-notes "")
+              :last-action (or last-action "")
+              :agent-id (or agent-id "")
+              :agent-session-id (or agent-session-id ""))))))
+
+(defun get-last-session (store)
+  "Return the most recently ended session as a plist, or NIL if none."
+  (let ((rows (sqlite:execute-to-list
+               (store-db store)
+               "SELECT id, started_at, ended_at, active_issue_id,
+                       handoff_notes, last_action, agent_id, agent_session_id
+                FROM sessions WHERE ended_at IS NOT NULL
+                ORDER BY ended_at DESC LIMIT 1")))
+    (when rows
+      (destructuring-bind (id started-at ended-at active-issue-id
+                           handoff-notes last-action agent-id agent-session-id)
+          (first rows)
+        (list :id id
+              :started-at (parse-timestamp started-at)
+              :ended-at (parse-timestamp ended-at)
+              :active-issue-id active-issue-id
+              :handoff-notes (or handoff-notes "")
+              :last-action (or last-action "")
+              :agent-id (or agent-id "")
+              :agent-session-id (or agent-session-id ""))))))
+
+(defun set-session-work (store session-id issue-id)
+  "Set the active issue for SESSION-ID."
+  (sqlite:execute-non-query
+   (store-db store)
+   "UPDATE sessions SET active_issue_id = ? WHERE id = ?"
+   issue-id session-id)
+  (values))
+
+(defun record-session-action (store session-id action-text)
+  "Record a breadcrumb action for SESSION-ID and auto-comment on the active
+issue if one is set."
+  (let ((db (store-db store)))
+    (sqlite:execute-non-query
+     db
+     "UPDATE sessions SET last_action = ? WHERE id = ?"
+     action-text session-id)
+    ;; Auto-comment on the active issue
+    (let ((rows (sqlite:execute-to-list
+                 db
+                 "SELECT active_issue_id FROM sessions WHERE id = ?"
+                 session-id)))
+      (when (and rows (first rows) (first (first rows)))
+        (add-comment store (first (first rows))
+                     "[session]"
+                     action-text)))
+    (values)))
+
+(defun auto-end-stale-sessions (store)
+  "End any active sessions that have been idle for more than
+*session-stale-hours*.  Marks them with an abandonment note."
+  (let* ((db (store-db store))
+         (threshold (local-time:timestamp-
+                     (local-time:now)
+                     *session-stale-hours*
+                     :hour))
+         (threshold-str (format-timestamp threshold))
+         (rows (sqlite:execute-to-list
+                db
+                "SELECT id FROM sessions
+                 WHERE ended_at IS NULL AND started_at < ?"
+                threshold-str)))
+    (dolist (row rows)
+      (end-session store (first row)
+                   :notes "[auto-ended] Session abandoned (stale >4h)"))
+    (values)))
+
+;;; ============================================================================
+;;; Stats
+;;; ============================================================================
+
+(defun issue-stats (store)
+  "Return aggregate statistics as a plist with keys :total,
+:counts-by-status, :counts-by-priority, :counts-by-type, :ready-count."
+  (let ((db (store-db store)))
+    (flet ((qcount (sql &rest params)
+             (or (apply #'sqlite:execute-single db sql params) 0)))
+      (list
+       :total (qcount "SELECT COUNT(*) FROM issues WHERE status != 'tombstone'")
+       :counts-by-status
+       (list :open (qcount "SELECT COUNT(*) FROM issues WHERE status = 'open'")
+             :in-progress (qcount "SELECT COUNT(*) FROM issues WHERE status = 'in_progress'")
+             :blocked (qcount "SELECT COUNT(*) FROM issues WHERE status = 'blocked'")
+             :deferred (qcount "SELECT COUNT(*) FROM issues WHERE status = 'deferred'")
+             :closed (qcount "SELECT COUNT(*) FROM issues WHERE status = 'closed'"))
+       :counts-by-priority
+       (loop for p from 0 to 4
+             collect (intern (format nil "P~D" p) :keyword)
+             collect (qcount "SELECT COUNT(*) FROM issues WHERE priority = ? AND status NOT IN ('closed', 'tombstone')" p))
+       :counts-by-type
+       (list :bug (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'bug' AND status NOT IN ('closed', 'tombstone')")
+             :feature (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'feature' AND status NOT IN ('closed', 'tombstone')")
+             :task (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'task' AND status NOT IN ('closed', 'tombstone')")
+             :epic (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'epic' AND status NOT IN ('closed', 'tombstone')")
+             :chore (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'chore' AND status NOT IN ('closed', 'tombstone')")
+             :docs (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'docs' AND status NOT IN ('closed', 'tombstone')"))
+       :ready-count (length (ready-issues store))))))

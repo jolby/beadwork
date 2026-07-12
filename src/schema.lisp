@@ -186,7 +186,21 @@
         parent_id TEXT PRIMARY KEY,
         last_child INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE
-    )"))
+    )"
+
+   ;; ---- Sessions table (beadwork extension — not in br schema) ----
+   "CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        started_at DATETIME NOT NULL,
+        ended_at DATETIME,
+        active_issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,
+        handoff_notes TEXT DEFAULT '',
+        last_action TEXT DEFAULT '',
+        agent_id TEXT DEFAULT '',
+        agent_session_id TEXT DEFAULT ''
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(ended_at) WHERE ended_at IS NULL"
+   ))
 
 (defparameter +schema-sql+
   (format nil "~{~A;~%~}" *schema-statements*)
