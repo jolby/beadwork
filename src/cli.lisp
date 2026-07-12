@@ -838,6 +838,70 @@ Examples:
                        (comment-list/command))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Command: blocked
+;;; ---------------------------------------------------------------------------
+
+(defun blocked/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store)))
+    (let ((issues (blocked-issues store)))
+      (unless (eq *format* :json)
+        (format t "Blocked issues (~D):~%~%" (length issues)))
+      (print-issues issues))))
+
+(defun blocked/command ()
+  (clingon:make-command
+   :name "blocked"
+   :description "Show issues blocked by unclosed dependencies"
+   :options (global-options)
+   :handler #'blocked/handler))
+
+;;; ---------------------------------------------------------------------------
+;;; Command: delete
+;;; ---------------------------------------------------------------------------
+
+(defun delete/handler (cmd)
+  (let* ((store (ensure-store))
+         (id (first (clingon:command-arguments cmd)))
+         (force (clingon:getopt cmd :force)))
+    (unless id
+      (format *error-output* "Usage: bw delete <id> [-f]~%")
+      (clingon:exit 1))
+    (unless force
+      (format t "Delete ~A? [y/N] " id)
+      (finish-output)
+      (let ((response (string-downcase (read-line))))
+        (unless (string= response "y")
+          (format t "Cancelled.~%")
+          (clingon:exit 0))))
+    (handler-case
+        (progn
+          (delete-issue store id)
+          (format t "Deleted ~A~%" id))
+      (issue-not-found ()
+        (format *error-output* "Issue ~A not found.~%" id)
+        (clingon:exit 1)))))
+
+(defun delete/options ()
+  (list
+   (clingon:make-option
+    :boolean
+    :short-name #\f
+    :long-name "force"
+    :description "Skip confirmation prompt"
+    :key :force)))
+
+(defun delete/command ()
+  (clingon:make-command
+   :name "delete"
+   :description "Delete an issue (requires confirmation)"
+   :aliases '("rm")
+   :options (append (delete/options) (global-options))
+   :handler #'delete/handler
+   :usage "<id>"))
+
+;;; ---------------------------------------------------------------------------
 ;;; Command: search
 ;;; ---------------------------------------------------------------------------
 
@@ -1280,6 +1344,8 @@ Examples:
                        (update/command)
                        (close/command)
                        (reopen/command)
+                       (blocked/command)
+                       (delete/command)
                        (dep/command)
                        (search/command)
                        (stats/command)

@@ -452,6 +452,20 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
     (mapcar #'row-to-issue rows)))
 
 ;;; ---------------------------------------------------------------------------
+;;; Delete Issue
+;;; ---------------------------------------------------------------------------
+
+(defun delete-issue (store id)
+  "Delete an issue by ID. Returns the deleted issue's ID on success.
+Signals ISSUE-NOT-FOUND if the issue doesn't exist."
+  (get-issue store id)                    ; validate existence
+  (sqlite:execute-non-query
+   (store-db store)
+   "DELETE FROM issues WHERE id = ?"
+   id)
+  id)
+
+;;; ---------------------------------------------------------------------------
 ;;; Search Issues
 ;;; ---------------------------------------------------------------------------
 
