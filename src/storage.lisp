@@ -385,8 +385,12 @@ ORDER BY priority ASC, created_at DESC."
       (push "assignee = ?" clauses)
       (push assignee params))
     (when source-repo
-      (push "source_repo = ?" clauses)
-      (push source-repo params))
+      (let ((repos (if (listp source-repo) source-repo (list source-repo))))
+        (push (format nil "source_repo IN (~{~A~^,~})"
+                      (mapcar (constantly "?") repos))
+              clauses)
+        (dolist (r (reverse repos))
+          (push r params))))
     (let ((sql (format nil "SELECT ~A FROM issues WHERE ~{~A~^ AND ~} ORDER BY priority ASC, created_at DESC"
                        *issue-select-columns* (nreverse clauses))))
       (when limit
@@ -405,9 +409,13 @@ ORDER BY priority ASC, created_at DESC."
 
 (defun ready-issues (store &key source-repo)
   "Return issues that are open/in_progress and not blocked by any unclosed
-blocking dependency. Uses NOT EXISTS subquery against dependencies table."
-  (let* ((repo-clause (if source-repo
-                          "AND i.source_repo = ?"
+blocking dependency. Uses NOT EXISTS subquery against dependencies table.
+SOURCE-REPO may be a string or a list of strings."
+  (let* ((repos (when source-repo
+                  (if (listp source-repo) source-repo (list source-repo))))
+         (repo-clause (if repos
+                          (format nil "AND i.source_repo IN (~{~A~^,~})"
+                                  (mapcar (constantly "?") repos))
                           ""))
          (sql (format nil
                 "SELECT ~A FROM issues i
@@ -425,8 +433,8 @@ blocking dependency. Uses NOT EXISTS subquery against dependencies table."
                  ORDER BY i.priority ASC, i.created_at DESC"
                  *issue-select-columns*
                  repo-clause))
-         (rows (if source-repo
-                   (sqlite:execute-to-list (store-db store) sql source-repo)
+         (rows (if repos
+                   (apply #'sqlite:execute-to-list (store-db store) sql repos)
                    (sqlite:execute-to-list (store-db store) sql))))
     (mapcar #'row-to-issue rows)))
 

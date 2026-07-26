@@ -266,10 +266,15 @@ Examples:
     :description "Path to .beads/ directory"
     :key :db-path)
    (clingon:make-option
-    :string
+    :list
     :long-name "repo"
-    :description "Filter by source repository (e.g. beadwork, cogen-ai)"
-    :key :source-repo)))
+    :description "Filter by source repository. May be specified multiple times (e.g. --repo csct --repo beadwork)"
+    :key :source-repo)
+   (clingon:make-option
+    :boolean/true
+    :long-name "all-repos"
+    :description "Show issues from all repositories (disable source-repo filtering)"
+    :key :all-repos)))
 
 (defun parse-format (value)
   "Convert format string to keyword."
@@ -326,11 +331,14 @@ Examples:
                   (parse-issue-type type-val)))
          (assignee (clingon:getopt cmd :assignee))
          (limit (clingon:getopt cmd :limit))
+         (all-repos (clingon:getopt cmd :all-repos))
          (explicit-repo (clingon:getopt cmd :source-repo))
          (auto-repo (detect-source-repo))
-         ;; Only auto-filter by repo when in a subdirectory and no explicit --repo
-         (source-repo (or explicit-repo
-                          (unless (string= auto-repo ".") auto-repo))))
+         (source-repo (cond
+                        (all-repos nil)
+                        (explicit-repo explicit-repo)
+                        ((string= auto-repo ".") nil)
+                        (t (list auto-repo)))))
     (let ((issues (list-issues store
                                :status status
                                :priority priority
@@ -356,14 +364,18 @@ Examples:
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
          (store (ensure-store)))
-    (let* ((explicit-repo (clingon:getopt cmd :source-repo))
+    (let* ((all-repos (clingon:getopt cmd :all-repos))
+           (explicit-repo (clingon:getopt cmd :source-repo))
            (auto-repo (detect-source-repo))
-           (source-repo (or explicit-repo
-                            (unless (string= auto-repo ".") auto-repo)))
+           (source-repo (cond
+                          (all-repos nil)
+                          (explicit-repo explicit-repo)
+                          ((string= auto-repo ".") nil)
+                          (t (list auto-repo))))
            (issues (ready-issues store :source-repo source-repo)))
       (unless (eq *format* :json)
         (if source-repo
-            (format t "Ready work for ~A (~D issues):~%~%" source-repo (length issues))
+            (format t "Ready work for ~{~A~^, ~} (~D issues):~%~%" source-repo (length issues))
             (format t "Ready work (~D issues):~%~%" (length issues))))
       (print-issues issues))))
 
@@ -437,8 +449,14 @@ Examples:
          (assignee (clingon:getopt cmd :assignee))
          (parent (clingon:getopt cmd :parent))
          (blocks-on (clingon:getopt cmd :blocks-on))
-         (source-repo (or (clingon:getopt cmd :source-repo)
-                          (detect-source-repo))))
+         (explicit-repo (clingon:getopt cmd :source-repo))
+         (auto-repo (detect-source-repo))
+         (source-repo (cond
+                        (explicit-repo (if (listp explicit-repo)
+                                          (first explicit-repo)
+                                          explicit-repo))
+                        ((string= auto-repo ".") ".")
+                        (t auto-repo))))
     (let ((issue (create-issue store
                                :title title
                                :description description
@@ -892,7 +910,7 @@ Examples:
 (defun delete/options ()
   (list
    (clingon:make-option
-    :boolean
+    :boolean/true
     :short-name #\f
     :long-name "force"
     :description "Skip confirmation prompt"
