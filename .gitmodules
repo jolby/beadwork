@@ -1,0 +1,3 @@
+[submodule ".cl-make"]
+	path = .cl-make
+	url = /home/jboehland/work/meta-common
