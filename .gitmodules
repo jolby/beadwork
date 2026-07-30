@@ -1,3 +1,3 @@
 [submodule ".cl-make"]
 	path = .cl-make
-	url = https://github.com/jolby/meta-common.git
+	url = git@github.com:jolby/meta-common.git
