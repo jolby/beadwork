@@ -285,7 +285,7 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
 ;;; ---------------------------------------------------------------------------
 
 (defun update-issue (store id &key title status priority description assignee
-                                   notes owner issue-type close-reason)
+                                   notes owner issue-type close-reason source-repo)
   "Update specified fields of issue ID. Returns the updated issue.
 Only non-NIL keyword arguments cause updates."
   (let* ((db (store-db store))
@@ -304,7 +304,8 @@ Only non-NIL keyword arguments cause updates."
       (when-field notes "notes = ?" notes)
       (when-field owner "owner = ?" owner)
       (when-field issue-type "issue_type = ?" (issue-type-string issue-type))
-      (when-field close-reason "close_reason = ?" close-reason))
+      (when-field close-reason "close_reason = ?" close-reason)
+      (when-field source-repo "source_repo = ?" source-repo))
     (unless clauses
       (return-from update-issue (get-issue store id)))
     ;; Always update updated_at and content_hash

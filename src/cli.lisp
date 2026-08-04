@@ -579,14 +579,17 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
            (priority (when-let (p (clingon:getopt cmd :priority))
                       (parse-priority p)))
             (assignee (clingon:getopt cmd :assignee))
-            (notes (clingon:getopt cmd :notes)))
+            (notes (clingon:getopt cmd :notes))
+            (repo-val (clingon:getopt cmd :source-repo))
+            (source-repo (when repo-val (first repo-val))))
       (let ((issue (update-issue store id
                                 :title title
                                 :description description
                                 :status status
                                 :priority priority
                                 :assignee assignee
-                                :notes notes)))
+                                :notes notes
+                                :source-repo source-repo)))
         (unless (eq *format* :json)
           (format t "Updated ~A~%" (issue-id issue)))
         (print-issue-single issue)))))
