@@ -71,16 +71,31 @@ Examples:
       (error 'beadwork-error :message "No .beads/ directory found. Run 'bw init' first."))
     (merge-pathnames "beads.db" beads-dir)))
 
-(defun resolve-store ()
-  "Get or create the current store."
+(defun resolve-db-path (db-dir)
+  "Resolve the SQLite database path.
+
+If DB-DIR (the --db option value) is given, normalize it as a directory,
+ensure it exists and return <DB-DIR>/beads.db.  Otherwise auto-detect
+via find-beads-dir."
+  (if db-dir
+      (let ((dir (uiop:ensure-directory-pathname db-dir)))
+        (ensure-directories-exist dir)
+        (namestring (merge-pathnames "beads.db" dir)))
+      (namestring (find-db-path))))
+
+(defun resolve-store (cmd)
+  "Get or create the current store, honoring the --db option.
+
+Uses GETOPT* so the flag is honored whether given before or after the
+subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
   (unless *store*
-    (setf *store* (open-store (namestring (find-db-path)))))
+    (setf *store* (open-store (resolve-db-path (clingon:getopt* cmd :db-path)))))
   *store*)
 
-(defun ensure-store ()
+(defun ensure-store (cmd)
   "Ensure store is open, or exit with error."
   (handler-case
-      (resolve-store)
+      (resolve-store cmd)
     (error (c)
       (format *error-output* "Error: ~A~%" c)
       (clingon:exit 1))))
@@ -322,7 +337,7 @@ Examples:
 (defun list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (status (when-let (s (clingon:getopt cmd :status))
                    (parse-status s)))
          (priority (when-let (p (clingon:getopt cmd :priority))
@@ -363,7 +378,7 @@ Examples:
 (defun ready/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store)))
+         (store (ensure-store cmd)))
     (let* ((all-repos (clingon:getopt cmd :all-repos))
            (explicit-repo (clingon:getopt cmd :source-repo))
            (auto-repo (detect-source-repo))
@@ -441,7 +456,7 @@ Examples:
 (defun create/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (title (clingon:getopt cmd :title))
          (description (clingon:getopt cmd :description))
          (itype (parse-issue-type (clingon:getopt cmd :type)))
@@ -487,7 +502,7 @@ Examples:
 (defun show/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
       (format *error-output* "Error: Issue ID required~%")
@@ -552,7 +567,7 @@ Examples:
 (defun update/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
       (format *error-output* "Error: Issue ID required~%")
@@ -602,7 +617,7 @@ Examples:
 (defun close/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd)))
          (reason (clingon:getopt cmd :reason)))
     (unless id
@@ -628,7 +643,7 @@ Examples:
 (defun reopen/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
       (format *error-output* "Error: Issue ID required~%")
@@ -658,7 +673,7 @@ Examples:
      :key :blocks-on)))
 
 (defun dep-add/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (args (clingon:command-arguments cmd))
          (child (first args))
          (parent (or (clingon:getopt cmd :blocks-on) (second args))))
@@ -672,12 +687,12 @@ Examples:
   (clingon:make-command
    :name "add"
    :description "Add a dependency"
-   :options (dep-add/options)
+   :options (append (dep-add/options) (global-options))
    :handler #'dep-add/handler
    :usage "<child-id> [--blocks-on <parent-id>]"))
 
 (defun dep-remove/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (args (clingon:command-arguments cmd))
          (child (first args))
          (parent (second args)))
@@ -691,13 +706,14 @@ Examples:
   (clingon:make-command
    :name "remove"
    :description "Remove a dependency"
+   :options (global-options)
    :handler #'dep-remove/handler
    :usage "<child-id> <parent-id>"))
 
 (defun dep-list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
       (format *error-output* "Usage: bw dep list <issue-id>~%")
@@ -732,7 +748,7 @@ Examples:
 ;;; ---------------------------------------------------------------------------
 
 (defun label-add/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (args (clingon:command-arguments cmd))
          (issue-id (first args))
          (label (second args)))
@@ -746,11 +762,12 @@ Examples:
   (clingon:make-command
    :name "add"
    :description "Add a label to an issue"
+   :options (global-options)
    :handler #'label-add/handler
    :usage "<issue-id> <label>"))
 
 (defun label-remove/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (args (clingon:command-arguments cmd))
          (issue-id (first args))
          (label (second args)))
@@ -764,11 +781,12 @@ Examples:
   (clingon:make-command
    :name "remove"
    :description "Remove a label from an issue"
+   :options (global-options)
    :handler #'label-remove/handler
    :usage "<issue-id> <label>"))
 
 (defun label-list/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (issue-id (first (clingon:command-arguments cmd))))
     (if issue-id
         (let ((labels (get-labels store issue-id)))
@@ -785,6 +803,7 @@ Examples:
    :name "list"
    :description "List labels for an issue or all labels"
    :aliases '("ls")
+   :options (global-options)
    :handler #'label-list/handler
    :usage "[issue-id]"))
 
@@ -801,7 +820,7 @@ Examples:
 ;;; ---------------------------------------------------------------------------
 
 (defun comment-add/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (args (clingon:command-arguments cmd))
          (issue-id (first args))
          (text (second args)))
@@ -815,13 +834,14 @@ Examples:
   (clingon:make-command
    :name "add"
    :description "Add a comment to an issue"
+   :options (global-options)
    :handler #'comment-add/handler
    :usage "<issue-id> <text>"))
 
 (defun comment-list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (issue-id (first (clingon:command-arguments cmd))))
     (unless issue-id
       (format *error-output* "Usage: bw comment list <issue-id>~%")
@@ -868,7 +888,7 @@ Examples:
 (defun blocked/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store)))
+         (store (ensure-store cmd)))
     (let ((issues (blocked-issues store)))
       (unless (eq *format* :json)
         (format t "Blocked issues (~D):~%~%" (length issues)))
@@ -886,7 +906,7 @@ Examples:
 ;;; ---------------------------------------------------------------------------
 
 (defun delete/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd)))
          (force (clingon:getopt cmd :force)))
     (unless id
@@ -932,7 +952,7 @@ Examples:
 (defun search/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (query (first (clingon:command-arguments cmd))))
     (unless query
       (format *error-output* "Usage: bw search <query>~%")
@@ -956,7 +976,7 @@ Examples:
 (defun stats/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (stats (issue-stats store))
          (counts-status (getf stats :counts-by-status))
          (counts-pri (getf stats :counts-by-priority))
@@ -1000,7 +1020,7 @@ Examples:
 (defun session-start/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (agent-id (clingon:getopt cmd :agent-id)))
     (let ((current (get-current-session store)))
       (if current
@@ -1049,7 +1069,7 @@ Examples:
    :handler #'session-start/handler))
 
 (defun session-end/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (notes (clingon:getopt cmd :notes))
          (current (get-current-session store)))
     (unless current
@@ -1077,7 +1097,7 @@ Examples:
    :handler #'session-end/handler))
 
 (defun session-work/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (issue-id (first (clingon:command-arguments cmd)))
          (current (get-current-session store)))
     (unless current
@@ -1104,7 +1124,7 @@ Examples:
    :usage "<issue-id>"))
 
 (defun session-action/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
          (text (first (clingon:command-arguments cmd)))
          (current (get-current-session store)))
     (unless current
@@ -1127,7 +1147,7 @@ Examples:
 (defun session-status/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (current (get-current-session store)))
     (if current
         (let* ((started (getf current :started-at))
@@ -1220,15 +1240,16 @@ Examples:
 ;;; ---------------------------------------------------------------------------
 
 (defun sync/handler (cmd)
-  (let* ((store (ensure-store))
+  (let* ((store (ensure-store cmd))
+         (beads-dir (or (clingon:getopt* cmd :db-path) (find-beads-dir)))
          (direction (clingon:getopt cmd :direction)))
     (cond
       ((string-equal direction "export")
-       (let ((path (merge-pathnames "issues.jsonl" (find-beads-dir))))
+       (let ((path (merge-pathnames "issues.jsonl" beads-dir)))
          (export-jsonl store (namestring path))
          (format t "Exported to ~A~%" path)))
       ((string-equal direction "import")
-       (let ((path (merge-pathnames "issues.jsonl" (find-beads-dir))))
+       (let ((path (merge-pathnames "issues.jsonl" beads-dir)))
          (import-jsonl store (namestring path))
          (format t "Imported from ~A~%" path)))
       (t
@@ -1271,7 +1292,7 @@ Examples:
 (defun doctor-status-docs/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (status-dir (or (clingon:getopt cmd :status-dir)
                          (find-status-docs-dir))))
     (unless status-dir
@@ -1298,7 +1319,7 @@ Examples:
 (defun doctor-health/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
-         (store (ensure-store))
+         (store (ensure-store cmd))
          (status-dir (or (clingon:getopt cmd :status-dir)
                          (find-status-docs-dir))))
     (unless status-dir

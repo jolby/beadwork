@@ -39,6 +39,7 @@
                  (:file "base")
                  (:file "timestamp")
                  (:file "sync")
-                 (:file "doctor"))))
+                 (:file "doctor")
+                 (:file "cli"))))
   :perform (asdf:test-op (op c)
                     (uiop:symbol-call :parachute :test :beadwork/tests)))
