@@ -3,7 +3,7 @@
   :author "Joel Boehland"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("sqlite"
+  :depends-on ("cl-sqlite-deep/sqlite-compat"
                "com.inuoe.jzon"
                "clingon"
                "ironclad"

@@ -1,7 +1,8 @@
 (defpackage #:beadwork
   (:use #:cl)
   (:local-nicknames
-   (#:jzon #:com.inuoe.jzon))
+   (#:jzon #:com.inuoe.jzon)
+   (#:sqlite #:sqlite-compat))
   (:import-from #:alexandria
                 #:define-constant
                 #:when-let
