@@ -238,6 +238,7 @@ if not, applies the full schema. Safe to call on every connection open."
     (apply-schema db))
   ;; Always set PRAGMAs even if schema already exists — they are per-connection.
   (sqlite:execute-non-query db "PRAGMA journal_mode=WAL")
+  (sqlite:execute-non-query db "PRAGMA busy_timeout=5000")
   (sqlite:execute-non-query db "PRAGMA foreign_keys=ON")
   (sqlite:execute-non-query db "PRAGMA synchronous=NORMAL")
   (sqlite:execute-non-query db "PRAGMA temp_store=MEMORY")

@@ -118,10 +118,11 @@ which br's Rust chrono parser cannot handle."
                          (append vals (list id)))))))))
     (error () nil)))
 
-(defun open-store (path &key (prefix "bd"))
-  "Create a store, connect to SQLite at PATH, apply schema. Returns store instance."
+(defun open-store (path &key (prefix "bd") (busy-timeout 5000))
+  "Create a store, connect to SQLite at PATH, apply schema. Returns store instance.
+BUSY-TIMEOUT: milliseconds to wait for a locked database before failing (default 5000)."
   (let* ((store (make-instance 'store :db-path path :prefix prefix))
-         (db (sqlite:connect path)))
+         (db (sqlite:connect path :busy-timeout busy-timeout)))
     (setf (store-db store) db)
     (apply-schema db)
     ;; Normalize historical timestamps for br interop
@@ -134,9 +135,10 @@ which br's Rust chrono parser cannot handle."
     (sqlite:disconnect (store-db store))
     (setf (store-db store) nil)))
 
-(defmacro with-store ((var path &key (prefix "bd")) &body body)
-  "Open a store bound to VAR for the duration of BODY, ensuring close on exit."
-  `(let ((,var (open-store ,path :prefix ,prefix)))
+(defmacro with-store ((var path &key (prefix "bd") (busy-timeout 5000)) &body body)
+  "Open a store bound to VAR for the duration of BODY, ensuring close on exit.
+BUSY-TIMEOUT: milliseconds to wait for a locked database before failing (default 5000)."
+  `(let ((,var (open-store ,path :prefix ,prefix :busy-timeout ,busy-timeout)))
      (unwind-protect (progn ,@body)
        (close-store ,var))))
 
