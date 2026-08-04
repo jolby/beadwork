@@ -465,13 +465,13 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
          (parent (clingon:getopt cmd :parent))
          (blocks-on (clingon:getopt cmd :blocks-on))
          (explicit-repo (clingon:getopt cmd :source-repo))
-         (auto-repo (detect-source-repo))
          (source-repo (cond
                         (explicit-repo (if (listp explicit-repo)
                                           (first explicit-repo)
                                           explicit-repo))
-                        ((string= auto-repo ".") ".")
-                        (t auto-repo))))
+                        (t
+                         (format *error-output* "Error: --repo is required. Pass --repo <name> to assign the issue to a repository.~%")
+                         (clingon:exit 1)))))
     (let ((issue (create-issue store
                                :title title
                                :description description
