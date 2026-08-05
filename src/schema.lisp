@@ -188,6 +188,15 @@
         FOREIGN KEY (parent_id) REFERENCES issues(id) ON DELETE CASCADE
     )"
 
+   ;; ---- Idempotency Keys table (beadwork extension — batch dedup) ----
+   "CREATE TABLE IF NOT EXISTS idempotency_keys (
+        key TEXT PRIMARY KEY,
+        result TEXT NOT NULL DEFAULT '',
+        committed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )"
+   "CREATE INDEX IF NOT EXISTS idx_idempotency_keys_committed
+        ON idempotency_keys(committed_at)"
+
    ;; ---- Sessions table (beadwork extension — not in br schema) ----
    "CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,

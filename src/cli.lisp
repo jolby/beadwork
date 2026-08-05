@@ -22,6 +22,10 @@
 (defvar *format* :rich
   "Current output format: :rich, :plain, :json.")
 
+(defvar *no-color* nil
+  "When T, suppress all ANSI color/formatting codes in output.
+Set by the global --plain/--no-color flag.")
+
 (defvar *verbose* 0
   "Verbosity level counter.")
 
@@ -125,22 +129,26 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     (concatenate 'string s (make-string pad :initial-element #\Space))))
 
 (defun color-status (status)
-  "Return ANSI-colored status string."
+  "Return ANSI-colored status string, or plain when *no-color* is T."
   (let ((s (string-upcase (symbol-name status))))
-    (cond
-      ((eq status :in-progress) (concatenate 'string *ansi-green* s *ansi-reset*))
-      ((eq status :blocked)    (concatenate 'string *ansi-red* s *ansi-reset*))
-      ((eq status :deferred)   (concatenate 'string *ansi-yellow* s *ansi-reset*))
-      (t s))))
+    (if *no-color*
+        s
+        (cond
+          ((eq status :in-progress) (concatenate 'string *ansi-green* s *ansi-reset*))
+          ((eq status :blocked)    (concatenate 'string *ansi-red* s *ansi-reset*))
+          ((eq status :deferred)   (concatenate 'string *ansi-yellow* s *ansi-reset*))
+          (t s)))))
 
 (defun color-priority (p)
-  "Return ANSI-colored priority string."
+  "Return ANSI-colored priority string, or plain when *no-color* is T."
   (let ((s (format-priority p)))
-    (cond
-      ((= p 1) (concatenate 'string *ansi-bold* *ansi-red* s *ansi-reset*))
-      ((= p 2) (concatenate 'string *ansi-yellow* s *ansi-reset*))
-      ((= p 0) (concatenate 'string *ansi-bold* *ansi-red* "!!" s *ansi-reset*))
-      (t s))))
+    (if *no-color*
+        s
+        (cond
+          ((= p 1) (concatenate 'string *ansi-bold* *ansi-red* s *ansi-reset*))
+          ((= p 2) (concatenate 'string *ansi-yellow* s *ansi-reset*))
+          ((= p 0) (concatenate 'string *ansi-bold* *ansi-red* "!!" s *ansi-reset*))
+          (t s)))))
 
 (defun format-issue-plain (issue)
   "Format ISSUE as plain text line."
@@ -151,7 +159,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
           (or (issue-source-repo issue) ".")
           (issue-title issue)))
 
-(defun format-issue-rich (issue status-w pri-w type-w repo-w)
+(defun format-issue-rich (issue id-w status-w pri-w type-w repo-w)
   "Format ISSUE for terminal display with aligned columns and color."
   (let* ((status (issue-status issue))
          (repo (or (issue-source-repo issue) "."))
@@ -162,7 +170,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
          (repo-str repo)
          (title-str (issue-title issue)))
     (format nil "~A  ~A  ~A  ~A  ~A  ~A"
-            (pad-right id-str 12)
+            (pad-right id-str id-w)
             (pad-right status-str status-w)
             (pad-right pri-str pri-w)
             (pad-right type-str type-w)
@@ -178,7 +186,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
     (:rich
-     (let* ((id-w 12)
+     (let* ((id-w (max 12 (reduce #'max (mapcar (lambda (i) (length (issue-id i)))
+                                                 issues)
+                                   :initial-value 0)))
             (status-w (max 6 (reduce #'max (mapcar (lambda (i)
                                                       (visible-length
                                                        (color-status (issue-status i))))
@@ -218,7 +228,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
        (loop for issue in issues
              do (format t "~A~%"
                         (format-issue-rich issue
-                                           status-w pri-w type-w repo-w)))))))
+                                           id-w status-w pri-w type-w repo-w)))))))
 
 (defun print-issue-single (issue)
   "Print a single issue in detail."
@@ -289,7 +299,13 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     :boolean/true
     :long-name "all-repos"
     :description "Show issues from all repositories (disable source-repo filtering)"
-    :key :all-repos)))
+    :key :all-repos)
+   (clingon:make-option
+    :boolean/true
+    :long-name "plain"
+    :short-name #\P
+    :description "Suppress ANSI color/formatting codes in output"
+    :key :no-color)))
 
 (defun parse-format (value)
   "Convert format string to keyword."
@@ -337,6 +353,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (status (when-let (s (clingon:getopt cmd :status))
                    (parse-status s)))
@@ -378,6 +395,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun ready/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd)))
     (let* ((all-repos (clingon:getopt cmd :all-repos))
            (explicit-repo (clingon:getopt cmd :source-repo))
@@ -456,6 +474,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun create/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (title (clingon:getopt cmd :title))
          (description (clingon:getopt cmd :description))
@@ -502,6 +521,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun show/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
@@ -567,6 +587,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun update/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
@@ -613,18 +634,28 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     :string
     :short-name #\r
     :long-name "reason"
-    :description "Close reason (required)"
-    :key :reason
-    :required t)))
+    :description "Close reason"
+    :key :reason)
+   (clingon:make-option
+    :string
+    :short-name #\m
+    :long-name "message"
+    :description "Close message (alias for --reason)"
+    :key :message)))
 
 (defun close/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd)))
-         (reason (clingon:getopt cmd :reason)))
+         (reason (or (clingon:getopt cmd :reason)
+                     (clingon:getopt cmd :message))))
     (unless id
       (format *error-output* "Error: Issue ID required~%")
+      (clingon:exit 1))
+    (unless reason
+      (format *error-output* "Error: close reason required (-r/--reason or -m/--message)~%")
       (clingon:exit 1))
     (let ((issue (close-issue store id :reason reason)))
       (unless (eq *format* :json)
@@ -646,6 +677,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun reopen/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
@@ -716,6 +748,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun dep-list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (id (first (clingon:command-arguments cmd))))
     (unless id
@@ -844,6 +877,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun comment-list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (issue-id (first (clingon:command-arguments cmd))))
     (unless issue-id
@@ -877,12 +911,64 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
    :handler #'comment-list/handler
    :usage "<issue-id>"))
 
+(defun comment-edit/handler (cmd)
+  (let* ((store (ensure-store cmd))
+         (args (clingon:command-arguments cmd))
+         (comment-id-str (first args))
+         (text (second args)))
+    (unless (and comment-id-str text)
+      (format *error-output* "Usage: bw comment edit <comment-id> <new-text>~%")
+      (clingon:exit 1))
+    (let ((comment-id (parse-integer comment-id-str :junk-allowed nil)))
+      (unless comment-id
+        (format *error-output* "Error: comment-id must be an integer (use 'bw comment list <issue-id>' to find IDs)~%")
+        (clingon:exit 1))
+      (handler-case
+          (progn
+            (edit-comment store comment-id text)
+            (format t "Updated comment ~D~%" comment-id))
+        (beadwork-error (c)
+          (format *error-output* "Error: ~A~%" c)
+          (clingon:exit 1))))))
+
+(defun comment-edit/command ()
+  (clingon:make-command
+   :name "edit"
+   :description "Edit a comment's text by ID"
+   :options (global-options)
+   :handler #'comment-edit/handler
+   :usage "<comment-id> <new-text>"))
+
+(defun comment-delete/handler (cmd)
+  (let* ((store (ensure-store cmd))
+         (args (clingon:command-arguments cmd))
+         (comment-id-str (first args)))
+    (unless comment-id-str
+      (format *error-output* "Usage: bw comment rm <comment-id>~%")
+      (clingon:exit 1))
+    (let ((comment-id (parse-integer comment-id-str :junk-allowed nil)))
+      (unless comment-id
+        (format *error-output* "Error: comment-id must be an integer (use 'bw comment list <issue-id>' to find IDs)~%")
+        (clingon:exit 1))
+      (delete-comment store comment-id)
+      (format t "Deleted comment ~D~%" comment-id))))
+
+(defun comment-delete/command ()
+  (clingon:make-command
+   :name "rm"
+   :description "Delete a comment by ID"
+   :options (global-options)
+   :handler #'comment-delete/handler
+   :usage "<comment-id>"))
+
 (defun comment/command ()
   (clingon:make-command
    :name "comment"
    :description "Manage issue comments"
    :sub-commands (list (comment-add/command)
-                       (comment-list/command))))
+                       (comment-list/command)
+                       (comment-edit/command)
+                       (comment-delete/command))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Command: blocked
@@ -891,6 +977,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun blocked/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd)))
     (let ((issues (blocked-issues store)))
       (unless (eq *format* :json)
@@ -955,6 +1042,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun search/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (query (first (clingon:command-arguments cmd))))
     (unless query
@@ -979,6 +1067,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun stats/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (stats (issue-stats store))
          (counts-status (getf stats :counts-by-status))
@@ -1023,6 +1112,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun session-start/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (agent-id (clingon:getopt cmd :agent-id)))
     (let ((current (get-current-session store)))
@@ -1150,6 +1240,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun session-status/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (current (get-current-session store)))
     (if current
@@ -1295,6 +1386,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun doctor-status-docs/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (status-dir (or (clingon:getopt cmd :status-dir)
                          (find-status-docs-dir))))
@@ -1322,6 +1414,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 (defun doctor-health/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
          (store (ensure-store cmd))
          (status-dir (or (clingon:getopt cmd :status-dir)
                          (find-status-docs-dir))))
@@ -1331,6 +1424,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     (let ((result (run-doctor-status-docs store status-dir)))
       (when (getf result :error)
         (clingon:exit 2))
+      ;; Soft-info (no What's Next section) — not an error, exit 0
+      (when (getf result :info)
+        (clingon:exit 0))
       (let* ((summary (getf result :summary))
              (ok (getf summary :ok))
              (stale (getf summary :stale))
@@ -1370,6 +1466,100 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                        (doctor-health/command))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Command: batch
+;;; ---------------------------------------------------------------------------
+
+(defun batch/handler (cmd)
+  "Handle bw batch — read JSON from stdin or --file, process, print result."
+  ;; --example: print sample JSON payload and exit
+  (when (clingon:getopt cmd :example)
+    (princ *batch-example-json*)
+    (terpri)
+    (return-from batch/handler))
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+       (*no-color* (clingon:getopt* cmd :no-color))
+         (store (ensure-store cmd))
+         (file-path (clingon:getopt cmd :file))
+         (idempotency-key (clingon:getopt cmd :idempotency-key))
+         (json-string
+           (if file-path
+               (uiop:read-file-string file-path)
+               (let ((lines '()))
+                 (loop for line = (read-line *standard-input* nil nil)
+                       while line
+                       do (push line lines))
+                 (format nil "~{~A~%~}" (nreverse lines))))))
+    (let ((result (process-batch store json-string :idempotency-key idempotency-key)))
+      (format t "~A~%" result)
+      ;; Exit non-zero if batch failed
+      (let ((parsed (com.inuoe.jzon:parse result)))
+        (unless (gethash "ok" parsed)
+          (clingon:exit 1))))))
+
+(defparameter *batch-example-json*
+  "{
+  \"idempotency_key\": \"h_abc123\",
+  \"operations\": [
+    {
+      \"op\": \"create\",
+      \"ref\": \"epic\",
+      \"title\": \"widget system overhaul\",
+      \"type\": \"epic\",
+      \"priority\": \"P1\",
+      \"description\": \"Complete rewrite of the widget subsystem.\\n\\nGoals:\\n- Faster rendering\\n- Better API\",
+      \"children\": [
+        { \"op\": \"create\", \"ref\": \"core\", \"title\": \"widget core engine\", \"type\": \"feature\", \"priority\": \"P2\" },
+        { \"op\": \"create\", \"ref\": \"ui\",   \"title\": \"widget UI layer\",    \"type\": \"feature\", \"priority\": \"P2\" }
+      ]
+    },
+    { \"op\": \"link\", \"source\": { \"ref\": \"core\" }, \"target\": { \"ref\": \"ui\" }, \"relation\": \"blocks\" },
+    { \"op\": \"comment\", \"id\": { \"ref\": \"epic\" }, \"text\": \"Batched creation — edit this template\" }
+  ]
+}"
+  "Example JSON payload for bw batch --example.")
+
+(defun batch/options ()
+  (list
+   (clingon:make-option
+    :string
+    :long-name "file"
+    :short-name #\f
+    :description "Read JSON batch payload from file"
+    :key :file)
+   (clingon:make-option
+    :string
+    :long-name "idempotency-key"
+    :short-name #\k
+    :description "Idempotency key for safe retry"
+    :key :idempotency-key)
+   (clingon:make-option
+    :boolean/true
+    :long-name "dry-run"
+    :description "Validate JSON without touching the database"
+    :key :dry-run)
+   (clingon:make-option
+    :boolean/true
+    :long-name "example"
+    :description "Print an example batch payload and exit"
+    :key :example)))
+
+(defun batch/command ()
+  (clingon:make-command
+   :name "batch"
+   :description "Process a batch of operations from JSON payload.
+
+Payload is a JSON object with an 'operations' array. Each operation has an 'op' field:
+  create: {\"op\":\"create\", \"title\":\"...\", \"type\":\"task|bug|feature|epic|chore|docs\",
+           \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"children\":[...]}
+  update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", ...}
+  link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"}, \"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
+  comment:{\"op\":\"comment\", \"id\":{\"ref\":\"x\"|\"id\":\"bd-xxx\"}, \"text\":\"...\"}
+Use --example to print a complete example payload."
+   :options (append (batch/options) (global-options))
+   :handler #'batch/handler))
+
+;;; ---------------------------------------------------------------------------
 ;;; Top-level command
 ;;; ---------------------------------------------------------------------------
 
@@ -1402,7 +1592,8 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                        (session/command)
                        (doctor/command)
                        (init/command)
-                       (sync/command))))
+                       (sync/command)
+                       (batch/command))))
 
 (defun main ()
   "Entry point for the bw executable."

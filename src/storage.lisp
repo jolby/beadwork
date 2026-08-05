@@ -430,7 +430,7 @@ SOURCE-REPO may be a string or a list of strings."
                    SELECT 1 FROM dependencies d
                    JOIN issues blocker ON blocker.id = d.depends_on_id
                    WHERE d.issue_id = i.id
-                   AND d.type IN ('blocks', 'parent-child', 'conditional-blocks', 'waits-for')
+                   AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
                    AND blocker.status NOT IN ('closed', 'tombstone')
                  )
                  ORDER BY i.priority ASC, i.created_at DESC"
@@ -454,7 +454,7 @@ SOURCE-REPO may be a string or a list of strings."
                     SELECT 1 FROM dependencies d
                     JOIN issues blocker ON blocker.id = d.depends_on_id
                     WHERE d.issue_id = i.id
-                    AND d.type IN ('blocks', 'parent-child', 'conditional-blocks', 'waits-for')
+                    AND d.type IN ('blocks', 'conditional-blocks', 'waits-for')
                     AND blocker.status NOT IN ('closed', 'tombstone')
                   )
                   ORDER BY i.priority ASC, i.created_at DESC"
@@ -596,6 +596,38 @@ Signals ISSUE-NOT-FOUND if the issue doesn't exist."
                   :body body
                   :created-at (or (parse-timestamp created-at) (local-time:now)))))
             rows)))
+
+(defun edit-comment (store comment-id text)
+  "Update the text of comment COMMENT-ID. Signals an error if not found."
+  (let* ((db (store-db store))
+         (row (sqlite:execute-to-list
+               db
+               "SELECT issue_id FROM comments WHERE id = ?"
+               comment-id)))
+    (unless row
+      (error 'beadwork-error :message
+             (format nil "Comment ~A not found" comment-id)))
+    (sqlite:execute-non-query
+     db
+     "UPDATE comments SET text = ? WHERE id = ?"
+     text comment-id)
+    (mark-dirty store (first (first row)))
+    (values)))
+
+(defun delete-comment (store comment-id)
+  "Delete comment COMMENT-ID. No-op if not found."
+  (let* ((db (store-db store))
+         (row (sqlite:execute-to-list
+               db
+               "SELECT issue_id FROM comments WHERE id = ?"
+               comment-id)))
+    (when row
+      (sqlite:execute-non-query
+       db
+       "DELETE FROM comments WHERE id = ?"
+       comment-id)
+      (mark-dirty store (first (first row)))))
+  (values))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Dirty Issues Tracking

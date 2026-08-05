@@ -60,7 +60,12 @@ Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
 
 (defun parse-whats-next-table (lines)
   "Parse the What's Next section from LINES (list of strings).
-Supports two formats:
+
+Detection priority:
+  1. Explicit marker: <!-- bw:whats-next --> (most reliable)
+  2. Heading variants: 'What's Next', 'Next Steps', 'Action Items', etc.
+
+Supports two table formats:
   1. Pipe table: heading + | Priority | Task | ID | separator + data rows
   2. Numbered list: heading + 1. Task text (possibly with embedded bw ID)
 Also accepts both markdown (#) and org-mode (*) headings."
@@ -70,8 +75,11 @@ Also accepts both markdown (#) and org-mode (*) headings."
         (rows nil))
     (dolist (line lines)
       (cond
-        ;; Detect What's Next heading (# or * prefixed, markdown or org-mode)
-        ((ppcre:scan "^(?:#+|\\*+)\\s*What'?s Next" line)
+        ;; Explicit marker: <!-- bw:whats-next -->
+        ((search "<!-- bw:whats-next -->" line)
+         (setf in-section t))
+        ;; Heading variants: What's Next, Next Steps, Action Items, Proposed Next Steps
+        ((ppcre:scan "^(?:#+|\\*+)\\s*(?:What'?s\\s+Next|Next\\s+Steps?|Action\\s+Items?|Proposed\\s+Next\\s+Steps?|Remaining\\s+Work)" line)
          (setf in-section t))
         ;; Table: detect separator row (dashes and pipes only)
         ((and in-section
@@ -129,9 +137,10 @@ Returns the pathname if it exists, or NIL."
 
 (defun run-doctor-status-docs (store status-dir)
   "Run the status-docs check. Reads the latest status doc, parses the
-What's Next table, and classifies each row against STORE.
+What's Next section, and classifies each row against STORE.
 Returns a plist with :status-doc (pathname), :findings (list of classification
-plists), and :summary (plist with :ok, :stale, :missing, :orphan counts)."
+plists), and :summary (plist with :ok, :stale, :missing, :orphan counts).
+If no What's Next section is found, returns a soft-info result (not an error)."
   (let ((doc (find-latest-status-doc status-dir)))
     (unless doc
       (return-from run-doctor-status-docs
@@ -147,11 +156,12 @@ plists), and :summary (plist with :ok, :stale, :missing, :orphan counts)."
             (list :status-doc doc
                   :findings findings
                   :summary (list :ok ok :stale stale :missing missing :orphan orphan)))
+          ;; No What's Next section — not an error, just a soft-info
           (list :status-doc doc
                 :findings nil
                 :summary (list :ok 0 :stale 0 :missing 0 :orphan 0)
-                :error (format nil "No What's Next section found in ~A"
-                               (file-namestring doc)))))))
+                :info (format nil "No What's Next section found in ~A. Add <!-- bw:whats-next --> before the section to enable cross-referencing."
+                              (file-namestring doc)))))))
 
 (defun format-finding-line (finding)
   "Format a single finding as a human-readable line.
@@ -182,14 +192,18 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
             (findings (getf result :findings))
             (summary (getf result :summary))
             (error (getf result :error))
-            (ok (getf summary :ok))
-            (stale (getf summary :stale))
-            (missing (getf summary :missing))
-            (orphan (getf summary :orphan)))
+            (info (getf result :info))
+            (ok (getf summary :ok 0))
+            (stale (getf summary :stale 0))
+            (missing (getf summary :missing 0))
+            (orphan (getf summary :orphan 0)))
        (cond
          (error
           (format t "bw doctor: ~A~%" error)
           2)
+         (info
+          (format t "bw doctor: ~A~%" info)
+          0)
          (t
           (format t "📋 bw doctor: ~A~%~%" (file-namestring doc))
           (dolist (f findings)
@@ -203,9 +217,9 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
      (let* ((doc (getf result :status-doc))
             (findings (getf result :findings))
             (summary (getf result :summary))
-            (healthy (and (zerop (getf summary :stale))
-                          (zerop (getf summary :missing))
-                          (zerop (getf summary :orphan)))))
+            (healthy (and (zerop (getf summary :stale 0))
+                          (zerop (getf summary :missing 0))
+                          (zerop (getf summary :orphan 0)))))
        (format t "~A"
                (jzon:stringify
                 (list (list "status-doc" (when doc (namestring doc)))
@@ -220,10 +234,11 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
                                                     (string-downcase
                                                      (symbol-name (getf f :issue-status)))))))
                                     findings))
-                      (list "summary" (list (list "ok" (getf summary :ok))
-                                            (list "stale" (getf summary :stale))
-                                            (list "missing" (getf summary :missing))
-                                            (list "orphan" (getf summary :orphan))))
-                      (list "healthy" healthy))
+                      (list "summary" (list (list "ok" (getf summary :ok 0))
+                                            (list "stale" (getf summary :stale 0))
+                                            (list "missing" (getf summary :missing 0))
+                                            (list "orphan" (getf summary :orphan 0))))
+                      (list "healthy" healthy)
+                      (list "info" (getf result :info)))
                 :pretty t))
        (if healthy 0 1)))))

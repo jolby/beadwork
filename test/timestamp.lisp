@@ -12,10 +12,10 @@
   "format-timestamp produces RFC 3339 with microsecond (6-digit) precision"
   (let* ((now (local-time:now))
          (ts (beadwork::format-timestamp now)))
-    ;; Format: YYYY-MM-DDTHH:MM:SS.ffffff±HHMM
-    ;; 10(date)+1(T)+8(time)+1(.)+6(frac)+5(offset) = 31
-    (is = 31 (length ts))
-    (true (cl-ppcre:scan "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}[+-]\\d{4}$" ts)
+    ;; Format: YYYY-MM-DDTHH:MM:SS.ffffff±HH:MM
+    ;; 10(date)+1(T)+8(time)+1(.)+6(frac)+6(offset) = 32
+    (is = 32 (length ts))
+    (true (cl-ppcre:scan "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}[+-]\\d{2}:\\d{2}$" ts)
           "Timestamp ~s does not match RFC 3339 with microsecond format" ts)))
 
 (define-test timestamp-utc-microsecond-precision
@@ -23,10 +23,10 @@
   "format-timestamp-utc produces microsecond precision in UTC"
   (let* ((now (local-time:now))
          (ts (beadwork::format-timestamp-utc now)))
-    ;; UTC timestamps: YYYY-MM-DDTHH:MM:SS.ffffff+0000
-    ;; 10(date)+1(T)+8(time)+1(.)+6(frac)+5(offset) = 31
-    (is = 31 (length ts))
-    (true (cl-ppcre:scan "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}[-+]\\d{4}$" ts)
+    ;; UTC timestamps: YYYY-MM-DDTHH:MM:SS.ffffff+00:00
+    ;; 10(date)+1(T)+8(time)+1(.)+6(frac)+6(offset) = 32
+    (is = 32 (length ts))
+    (true (cl-ppcre:scan "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}[-+]\\d{2}:\\d{2}$" ts)
           "UTC timestamp ~s does not match expected format" ts)))
 
 (define-test timestamp-parse-roundtrip

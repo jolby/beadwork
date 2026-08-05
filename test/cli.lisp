@@ -52,3 +52,45 @@ subcommand — the exact reproduce from bd-otg"
          (parsed (clingon:parse-command-line
                   app '("create" "-t" "x" "--db" "/tmp/alt/.beads"))))
     (is equal "/tmp/alt/.beads" (clingon:getopt* parsed :db-path))))
+(define-test ready-table-aligns-long-ids
+  :parent cli-suite
+  "Regression (bw ready alignment): the rich table must keep all
+columns aligned even when issue IDs exceed 12 characters.  The ID
+column width is computed from the longest ID in the result set, and
+every row (header, underline, and data) must use that same width —
+rows must not fall back to a hardcoded 12."
+  (let* ((issues (list
+                  (make-instance 'beadwork:issue
+                                 :id "bd-short.1"
+                                 :title "Short id row"
+                                 :issue-type :task
+                                 :source-repo "repo")
+                  (make-instance 'beadwork:issue
+                                 :id "bd-1kj7.12.1.10"
+                                 :title "Long id row"
+                                 :issue-type :bug
+                                 :source-repo "repo")))
+         (out (make-string-output-stream)))
+    (unwind-protect
+         (let ((beadwork::*format* :rich)
+               (beadwork::*no-color* t)
+               (*standard-output* out))
+           (beadwork::print-issues issues))
+      (close out))
+    (let* ((text (get-output-stream-string out))
+           (lines (remove "" (uiop:split-string text :separator '(#\Newline))
+                          :test #'string=))
+           (data-rows (remove-if (lambda (line)
+                                   (or (uiop:string-prefix-p "Ready work" line)
+                                       (uiop:string-prefix-p "ID" line)
+                                       (every (lambda (ch) (member ch '(#\- #\Space)))
+                                              line)))
+                                 lines))
+           (status-starts (mapcar (lambda (row)
+                                    (search "OPEN" row))
+                                  data-rows)))
+      (is equal 2 (length data-rows))
+      (true (every #'identity status-starts) "every data row has a STATUS column")
+      (true (every (lambda (s) (= (first status-starts) s))
+                   (rest status-starts))
+            "all rows start STATUS at the same column"))))

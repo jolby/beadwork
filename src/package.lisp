@@ -85,6 +85,8 @@
    #:get-labels
    #:list-all-labels
    #:add-comment
+   #:edit-comment
+   #:delete-comment
 
    ;; Dependency accessors
    #:dependency-issue-id
@@ -115,6 +117,9 @@
    #:generate-child-id
    #:base36-encode
    #:compute-content-hash
+
+   ;; Batch
+   #:process-batch
 
    ;; CLI entry
    #:main
