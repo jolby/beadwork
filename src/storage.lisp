@@ -340,9 +340,12 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
 (defun update-issue (store id &key title status priority description assignee
                                    notes owner issue-type close-reason source-repo)
   "Update specified fields of issue ID. Returns the updated issue.
-Only non-NIL keyword arguments cause updates."
+Only non-NIL keyword arguments cause updates. Status transitions into a
+terminal state (:closed or :tombstone) stamp closed_at, and transitions out of
+one clear it, satisfying the schema CHECK constraint (bd-lu5)."
   (let* ((db (store-db store))
          (now-str (format-timestamp (local-time:now)))
+         (current-status (issue-status (get-issue store id)))
          (clauses nil)
          (params nil))
     (macrolet ((when-field (key column value)
@@ -361,6 +364,15 @@ Only non-NIL keyword arguments cause updates."
       (when-field source-repo "source_repo = ?" source-repo))
     (unless clauses
       (return-from update-issue (get-issue store id)))
+    ;; Maintain the closed_at invariant on status transitions (bd-lu5):
+    ;; terminal statuses require closed_at, non-terminal statuses forbid it.
+    (when (and status (not (eq status current-status)))
+      (cond
+        ((status-terminal-p status)
+         (push "closed_at = ?" clauses)
+         (push now-str params))
+        ((status-terminal-p current-status)
+         (push "closed_at = NULL" clauses))))
     ;; Always update updated_at and content_hash
     (push "updated_at = ?" clauses)
     (push now-str params)

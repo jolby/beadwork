@@ -243,6 +243,21 @@
            (result (run-batch store json)))
       (false (batch-result-ok-p result)))))
 
+(define-test batch-update-to-closed-stamps-closed-at
+  :parent batch-suite
+  "batch update op with status closed must set closed_at, not trip the schema
+CHECK constraint (bd-lu5)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store :title "Batch close" :type :task))
+           (existing-id (beadwork:issue-id existing))
+           (json (format nil "{\"operations\":[{\"op\":\"update\",\"id\":\"~A\",\"status\":\"closed\"}]}" existing-id))
+           (result (run-batch store json)))
+      (true (batch-result-ok-p result))
+      (let ((issue (beadwork:get-issue store existing-id)))
+        (is eq :closed (beadwork:issue-status issue))
+        (true (beadwork:issue-closed-at issue)
+              "batch close must stamp closed_at")))))
+
 ;;; ============================================================================
 ;;; Idempotency
 ;;; ============================================================================

@@ -67,3 +67,31 @@
         (beadwork::edit-comment store comment-id "edited text")
         (beadwork::delete-comment store comment-id)
         (is equal 0 (length (beadwork:list-comments store issue-id)))))))
+
+(define-test update-issue-to-closed-stamps-closed-at
+  :parent beadwork-suite
+  "update-issue with :status :closed must set closed_at to satisfy the schema
+CHECK constraint (bd-lu5)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Close me" :type :task))
+           (id (beadwork:issue-id issue)))
+      (beadwork:update-issue store id :status :closed)
+      (let ((updated (beadwork:get-issue store id)))
+        (is eq :closed (beadwork:issue-status updated))
+        (true (beadwork:issue-closed-at updated)
+              "closing via update-issue must stamp closed_at")))))
+
+(define-test update-issue-from-closed-clears-closed-at
+  :parent beadwork-suite
+  "update-issue moving out of :closed must clear closed_at to satisfy the
+schema CHECK constraint (bd-lu5)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Reopen me" :type :task))
+           (id (beadwork:issue-id issue)))
+      (beadwork:close-issue store id :reason "done")
+      (true (beadwork:issue-closed-at (beadwork:get-issue store id)))
+      (beadwork:update-issue store id :status :in-progress)
+      (let ((updated (beadwork:get-issue store id)))
+        (is eq :in-progress (beadwork:issue-status updated))
+        (is eq nil (beadwork:issue-closed-at updated)
+            "moving out of closed must clear closed_at")))))
