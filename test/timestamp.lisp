@@ -49,3 +49,14 @@
   (let ((old-format "2026-06-06T12:06:34.923079000-0700"))
     (true (beadwork::parse-timestamp old-format)
           "parse-timestamp must still parse nanosecond timestamps for backward compat")))
+
+(define-test timestamp-parse-legacy-br-space-format
+  :parent beadwork-suite
+  "parse-timestamp accepts br's legacy 'YYYY-MM-DD HH:MM:SS' (space separator,
+no offset) as UTC. Without this, sync export substitutes wall-clock now for
+such rows, making issues.jsonl non-idempotent (bd-e84)."
+  (let ((ts (beadwork::parse-timestamp "2026-02-09 22:07:38")))
+    (true ts "parse-timestamp must parse legacy space-format timestamps")
+    (is equal "2026-02-09T22:07:38.000000+00:00"
+        (beadwork::format-timestamp-utc ts)
+        "legacy timestamp must be interpreted as UTC, not local time")))

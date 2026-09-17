@@ -60,11 +60,40 @@ local-time always emits 9+ fractional digits regardless of (:nsec N)."
   "Format TIMESTAMP as RFC 3339, or return NIL if TIMESTAMP is NIL."
   (when timestamp (format-timestamp timestamp)))
 
+(defun %parse-legacy-space-timestamp (string)
+  "Parse br's legacy UTC format \"YYYY-MM-DD HH:MM:SS[.ffffff]\" — space
+separator, no timezone offset, optional fractional seconds (as written by the
+old beads_rust bd tool). Returns a local-time timestamp, or NIL if STRING does
+not match or is an invalid date."
+  (multiple-value-bind (match groups)
+      (cl-ppcre:scan-to-strings
+       "^(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,6}))?$"
+       (or string ""))
+    (declare (ignore match))
+    (when groups
+      (handler-case
+          (local-time:encode-timestamp
+           (if (aref groups 6)
+               (* 1000 (parse-integer (aref groups 6))) ; fraction is microseconds
+               0)
+           (parse-integer (aref groups 5)) ; sec
+           (parse-integer (aref groups 4)) ; min
+           (parse-integer (aref groups 3)) ; hour
+           (parse-integer (aref groups 2)) ; day
+           (parse-integer (aref groups 1)) ; month
+           (parse-integer (aref groups 0)) ; year
+           :timezone local-time:+utc-zone+)
+        (error () nil)))))
+
 (defun parse-timestamp (string)
   "Parse an RFC 3339 string from SQLite into a local-time timestamp.
-Returns NIL if STRING is NIL or empty."
+Falls back to br's legacy space-separated UTC format (see
+%PARSE-LEGACY-SPACE-TIMESTAMP) which LOCAL-TIME's parser rejects. Without the
+fallback, readers substitute wall-clock now for such rows, making JSONL export
+non-idempotent. Returns NIL if STRING is NIL, empty, or unparsable."
   (when (and string (plusp (length string)))
-    (local-time:parse-timestring string :fail-on-error nil)))
+    (or (local-time:parse-timestring string :fail-on-error nil)
+        (%parse-legacy-space-timestamp string))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Store class
@@ -118,6 +147,28 @@ which br's Rust chrono parser cannot handle."
                          (append vals (list id)))))))))
     (error () nil)))
 
+(defun %normalize-dependency-timestamps (db)
+  "Normalize the dependencies.created_at column to microsecond-precision
+RFC 3339 UTC, matching the issues-table handling in %NORMALIZE-TIMESTAMPS.
+Br's legacy bd tool stored space-separated timestamps without an offset here;
+leaving them unparsed makes JSONL export substitute wall-clock now (bd-e84)."
+  (handler-case
+      (let ((rows (sqlite:execute-to-list db
+                    "SELECT issue_id, depends_on_id, created_at
+                     FROM dependencies")))
+        (dolist (row rows)
+          (destructuring-bind (issue-id depends-on-id created-at) row
+            (let ((ts (when (and created-at (plusp (length created-at)))
+                        (parse-timestamp created-at))))
+              (when ts
+                (let ((formatted (format-timestamp-utc ts)))
+                  (unless (string= created-at formatted)
+                    (sqlite:execute-non-query db
+                      "UPDATE dependencies SET created_at = ?
+                       WHERE issue_id = ? AND depends_on_id = ?"
+                      formatted issue-id depends-on-id))))))))
+    (error () nil)))
+
 (defun open-store (path &key (prefix "bd"))
   "Create a store, connect to SQLite at PATH, apply schema. Returns store instance.
 The connection uses cl-sqlite-deep's default busy timeout (5000ms)."
@@ -127,6 +178,8 @@ The connection uses cl-sqlite-deep's default busy timeout (5000ms)."
     (apply-schema db)
     ;; Normalize historical timestamps for br interop
     (%normalize-timestamps db)
+    ;; br's legacy timestamp format also lives in dependencies.created_at
+    (%normalize-dependency-timestamps db)
     store))
 
 (defun close-store (store)
