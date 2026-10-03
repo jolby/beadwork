@@ -287,7 +287,11 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
                   :owner (or owner "")
                   :created-at now
                   :created-by ""
-                  :updated-at now))
+                  :updated-at now
+                  ;; source-repo is written by the INSERT below; set it on the
+                  ;; returned object too so it matches the DB row (bd-x50).
+                  ;; It is not part of compute-content-hash (matches br).
+                  :source-repo (or source-repo ".")))
          (content-hash (compute-content-hash issue)))
     (setf (issue-content-hash issue) content-hash)
     (sqlite:execute-non-query

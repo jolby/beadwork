@@ -105,6 +105,54 @@
         (is equal :task (beadwork:issue-type issue))))))
 
 ;;; ============================================================================
+;;; Source-repo attribution (bd-818)
+;;; ============================================================================
+
+(define-test batch-create-persists-default-source-repo
+  :parent batch-suite
+  "bd-818: source-repo passed to process-batch is persisted on creates."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"r\",\"title\":\"Repo default\",\"type\":\"task\"}]}")
+           (result (beadwork::process-batch store json :source-repo "beadwork"))
+           (parsed (com.inuoe.jzon:parse result)))
+      (true (batch-result-ok-p parsed))
+      (is equal "beadwork"
+               (beadwork:issue-source-repo
+                (beadwork:get-issue store (batch-first-id parsed)))))))
+
+(define-test batch-create-per-op-repo-overrides-default
+  :parent batch-suite
+  "bd-818: a per-op \"repo\" field wins over the process-batch default."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"r\",\"title\":\"Repo op\",\"type\":\"task\",\"repo\":\"csct\"}]}")
+           (result (beadwork::process-batch store json :source-repo "beadwork"))
+           (parsed (com.inuoe.jzon:parse result)))
+      (true (batch-result-ok-p parsed))
+      (is equal "csct"
+               (beadwork:issue-source-repo
+                (beadwork:get-issue store (batch-first-id parsed)))))))
+
+(define-test batch-create-children-inherit-repo
+  :parent batch-suite
+  "bd-818: children[] inherit the parent's resolved repo unless they set
+their own \"repo\" field."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"p\",\"title\":\"Parent\",\"type\":\"epic\",\"children\":[{\"op\":\"create\",\"ref\":\"c1\",\"title\":\"Child inherit\",\"type\":\"task\"},{\"op\":\"create\",\"ref\":\"c2\",\"title\":\"Child override\",\"type\":\"task\",\"repo\":\"cogen-kb\"}]}]}")
+           (result (beadwork::process-batch store json :source-repo "beadwork"))
+           (parsed (com.inuoe.jzon:parse result))
+           (results (gethash "results" parsed)))
+      (true (batch-result-ok-p parsed))
+      (is equal "beadwork"
+               (beadwork:issue-source-repo
+                (beadwork:get-issue store (gethash "id" (aref results 0)))))
+      (is equal "beadwork"
+               (beadwork:issue-source-repo
+                (beadwork:get-issue store (gethash "id" (aref results 1)))))
+      (is equal "cogen-kb"
+               (beadwork:issue-source-repo
+                (beadwork:get-issue store (gethash "id" (aref results 2))))))))
+
+;;; ============================================================================
 ;;; Create with children
 ;;; ============================================================================
 

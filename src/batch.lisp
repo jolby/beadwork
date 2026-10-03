@@ -96,9 +96,10 @@ Returns the beadwork issue ID string. Signals error on unknown refs."
 ;;; Operation handlers
 ;;; ============================================================================
 
-(defun %batch-create (store op result-array)
+(defun %batch-create (store op result-array &key source-repo)
   "Handle a single create operation. Returns the created issue's beadwork ID.
-RESULT-ARRAY is the vector of result objects to append to."
+RESULT-ARRAY is the vector of result objects to append to.
+SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
   (let* ((ref (%batch-get-string op "ref"))
          (title (%batch-get-required op "title" :type :string))
          (itype-str (%batch-get-string op "type"))
@@ -107,6 +108,7 @@ RESULT-ARRAY is the vector of result objects to append to."
          (priority (if priority-str (parse-priority priority-str) 2))
          (description (%batch-get-string op "description"))
          (assignee (%batch-get-string op "assignee"))
+         (repo (or (%batch-get-string op "repo") source-repo))
          (children (%batch-get-array op "children"))
          (parent-ref nil))
     ;; Create the issue
@@ -116,7 +118,7 @@ RESULT-ARRAY is the vector of result objects to append to."
                    :priority priority
                    :description description
                    :assignee assignee
-                   :source-repo ".")))
+                   :source-repo repo)))
       (let ((id (issue-id issue)))
         ;; Record in ref map if ref provided
         (when ref
@@ -144,6 +146,7 @@ RESULT-ARRAY is the vector of result objects to append to."
                     (child-prio (if child-prio-str (parse-priority child-prio-str) 2))
                     (child-desc (%batch-get-string child-op "description"))
                     (child-assignee (%batch-get-string child-op "assignee"))
+                    (child-repo (or (%batch-get-string child-op "repo") repo))
                     (child-ref (%batch-get-string child-op "ref")))
                 (let ((child-issue (create-issue store
                                      :title child-title
@@ -152,7 +155,7 @@ RESULT-ARRAY is the vector of result objects to append to."
                                      :description child-desc
                                      :assignee child-assignee
                                      :parent id
-                                     :source-repo ".")))
+                                     :source-repo child-repo)))
                   (let ((child-id (issue-id child-issue)))
                     (when child-ref
                       (setf (gethash child-ref *ref-map*) child-id))
@@ -256,9 +259,11 @@ Uses upsert so that linking an already-dependent issue updates the type."
 ;;; Main entry point
 ;;; ============================================================================
 
-(defun process-batch (store json-string &key idempotency-key)
+(defun process-batch (store json-string &key idempotency-key source-repo)
   "Process a batch of operations encoded as JSON.
 STORE is a beadwork store instance.
+SOURCE-REPO is the default source repository for create ops (a per-op
+\"repo\" field overrides it).  NIL leaves create-issue's own default.
 JSON-STRING is the JSON payload with an \"operations\" array.
 IDEMPOTENCY-KEY, if given, enables idempotent replay — retrying the same key
 returns the cached result instead of re-executing.
@@ -305,7 +310,8 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
                    (let* ((op-ht (aref ops-vec i))
                           (op-type (%batch-get-string op-ht "op")))
                      (when (string= op-type "create")
-                       (%batch-create store op-ht result-array))))
+                       (%batch-create store op-ht result-array
+                                      :source-repo source-repo))))
                  ;; Pass 2: Updates, links, comments (resolve refs)
                  (dotimes (i (length ops-vec))
                    (let* ((op-ht (aref ops-vec i))

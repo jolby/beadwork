@@ -95,3 +95,16 @@ schema CHECK constraint (bd-lu5)."
         (is eq :in-progress (beadwork:issue-status updated))
         (is eq nil (beadwork:issue-closed-at updated)
             "moving out of closed must clear closed_at")))))
+
+(define-test create-issue-returns-source-repo
+  :parent beadwork-suite
+  "bd-x50: create-issue must return an issue whose source-repo slot matches
+what was persisted (the slot default is '.'), so CLI JSON output is not
+misleading."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Repo attribution" :type :task
+                                         :source-repo "cogen-source-code-tools"))
+           (id (beadwork:issue-id issue)))
+      (is equal "cogen-source-code-tools" (beadwork:issue-source-repo issue))
+      (is equal "cogen-source-code-tools"
+               (beadwork:issue-source-repo (beadwork:get-issue store id))))))

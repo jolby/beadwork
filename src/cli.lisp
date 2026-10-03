@@ -1482,6 +1482,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
          (store (ensure-store cmd))
          (file-path (clingon:getopt cmd :file))
          (idempotency-key (clingon:getopt cmd :idempotency-key))
+         (repo-val (clingon:getopt cmd :source-repo))
+         (source-repo (or (when repo-val (first repo-val))
+                          (detect-source-repo)))
          (json-string
            (if file-path
                (uiop:read-file-string file-path)
@@ -1490,7 +1493,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                        while line
                        do (push line lines))
                  (format nil "~{~A~%~}" (nreverse lines))))))
-    (let ((result (process-batch store json-string :idempotency-key idempotency-key)))
+    (let ((result (process-batch store json-string
+                                 :idempotency-key idempotency-key
+                                 :source-repo source-repo)))
       (format t "~A~%" result)
       ;; Exit non-zero if batch failed
       (let ((parsed (com.inuoe.jzon:parse result)))
@@ -1551,7 +1556,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 
 Payload is a JSON object with an 'operations' array. Each operation has an 'op' field:
   create: {\"op\":\"create\", \"title\":\"...\", \"type\":\"task|bug|feature|epic|chore|docs\",
-           \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"children\":[...]}
+           \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"repo\":\"...\", \"children\":[...]}
   update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", ...}
   link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"}, \"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
   comment:{\"op\":\"comment\", \"id\":{\"ref\":\"x\"|\"id\":\"bd-xxx\"}, \"text\":\"...\"}
