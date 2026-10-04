@@ -582,24 +582,58 @@ Signals ISSUE-NOT-FOUND if the issue doesn't exist."
    issue-id depends-on-id)
   (mark-dirty store issue-id))
 
+(defun %dependency-from-row (row)
+  "Build a DEPENDENCY instance from a dependencies-table ROW."
+  (destructuring-bind (iid did dtype created-at created-by metadata thread-id) row
+    (make-instance 'dependency
+      :issue-id iid
+      :depends-on-id did
+      :dep-type (parse-dependency-type dtype)
+      :created-at (or (parse-timestamp created-at) (local-time:now))
+      :created-by created-by
+      :metadata metadata
+      :thread-id thread-id)))
+
 (defun list-dependencies (store issue-id)
-  "Return a list of dependency objects for ISSUE-ID."
-  (let ((rows (sqlite:execute-to-list
-               (store-db store)
-               "SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
-                FROM dependencies WHERE issue_id = ?"
-               issue-id)))
-    (mapcar (lambda (row)
-              (destructuring-bind (iid did dtype created-at created-by metadata thread-id) row
-                (make-instance 'dependency
-                  :issue-id iid
-                  :depends-on-id did
-                  :dep-type (parse-dependency-type dtype)
-                  :created-at (or (parse-timestamp created-at) (local-time:now))
-                  :created-by created-by
-                  :metadata metadata
-                  :thread-id thread-id)))
-            rows)))
+  "Return a list of dependency objects for ISSUE-ID (outgoing edges: this
+issue depends on the returned depends-on ids)."
+  (mapcar #'%dependency-from-row
+          (sqlite:execute-to-list
+           (store-db store)
+           "SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+            FROM dependencies WHERE issue_id = ?"
+           issue-id)))
+
+(defun list-dependents (store issue-id)
+  "Return a list of dependency objects for edges pointing AT ISSUE-ID
+(incoming edges: the returned issue-ids depend on ISSUE-ID). Mirrors
+LIST-DEPENDENCIES."
+  (mapcar #'%dependency-from-row
+          (sqlite:execute-to-list
+           (store-db store)
+           "SELECT issue_id, depends_on_id, type, created_at, created_by, metadata, thread_id
+            FROM dependencies WHERE depends_on_id = ?"
+           issue-id)))
+
+(defun get-parent-id (store issue-id)
+  "Return the parent id of ISSUE-ID from a parent-child dependency, or NIL."
+  (sqlite:execute-single
+   (store-db store)
+   "SELECT depends_on_id FROM dependencies
+    WHERE issue_id = ? AND type = 'parent-child'
+    LIMIT 1"
+   issue-id))
+
+(defun list-children (store parent-id)
+  "Return the direct children of PARENT-ID as issue objects, ordered by id.
+Walks parent-child dependencies whose depends_on_id is PARENT-ID."
+  (mapcar (lambda (row) (get-issue store (first row)))
+          (sqlite:execute-to-list
+           (store-db store)
+           "SELECT issue_id FROM dependencies
+            WHERE depends_on_id = ? AND type = 'parent-child'
+            ORDER BY issue_id"
+           parent-id)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Labels

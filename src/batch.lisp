@@ -2,14 +2,14 @@
 
 ;;;; Batch Operations  --  bulk create/update/link/comment in one transaction
 ;;;;
-;;;; Entry point: process-batch(store json-string &key idempotency-key) → json-result
+;;;; Entry point: process-batch(store json-string &key idempotency-key source-repo dry-run) -> json-result
 ;;;;
-;;;; Design: bd-ol8 — bw: batch operations via JSON
+;;;; Design: bd-ol8 -- bw: batch operations via JSON
 ;;;; Spec: two-pass processing (create first, resolve refs second),
 ;;;;       idempotency via idempotency_keys table, single-transaction atomicity.
 
 ;;; ============================================================================
-;;; JSON helpers (no jzon dependency in this package — uses com.inuoe.jzon)
+;;; JSON helpers (no jzon dependency in this package -- uses com.inuoe.jzon)
 ;;; ============================================================================
 
 (defun %batch-parse (json-string)
@@ -73,7 +73,7 @@
 ;;; ============================================================================
 
 (defvar *ref-map* nil
-  "Dynamic variable: hash-table mapping batch ref labels → beadwork IDs.
+  "Dynamic variable: hash-table mapping batch ref labels -> beadwork IDs.
 Bound during batch processing for use in link resolution pass.")
 
 (defun %resolve-ref (target)
@@ -86,7 +86,7 @@ Returns the beadwork issue ID string. Signals error on unknown refs."
        (let ((resolved (gethash ref *ref-map*)))
          (unless resolved
            (error 'beadwork-error :message
-                  (format nil "Unknown ref '~A' in link — create the issue with this ref before linking to it" ref)))
+                  (format nil "Unknown ref '~A' in link -- create the issue with this ref before linking to it" ref)))
          resolved))
       (id id)
       (t (error 'beadwork-error :message
@@ -168,7 +168,7 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
                     (let ((grand-children (%batch-get-array child-op "children")))
                       (when grand-children
                         (error 'beadwork-error :message
-                               "Nested children beyond one level are not supported — use explicit link operations for deeper hierarchies")))))))))
+                               "Nested children beyond one level are not supported -- use explicit link operations for deeper hierarchies")))))))))
         id))))
 
 (defun %batch-update (store op result-array)
@@ -197,7 +197,7 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
         (vector-push-extend result-ht result-array)))))
 
 (defun %batch-link (store op result-array)
-  "Handle a link operation (pass 2 — all creates resolved).
+  "Handle a link operation (pass 2 -- all creates resolved).
 Uses upsert so that linking an already-dependent issue updates the type."
   (let* ((source-ht (%batch-get-required op "source" :type :hash-table))
          (target-ht (%batch-get-required op "target" :type :hash-table))
@@ -255,18 +255,54 @@ Uses upsert so that linking an already-dependent issue updates the type."
    "INSERT OR REPLACE INTO idempotency_keys (key, result, committed_at) VALUES (?, ?, ?)"
    key result-json (format-timestamp (local-time:now))))
 
+(defun %batch-link-refs (ops-vec)
+  "Return a hash-table of every ref named by a link op's source or target."
+  (let ((refs (make-hash-table :test #'equal)))
+    (dotimes (i (length ops-vec))
+      (let ((op (aref ops-vec i)))
+        (when (string= (%batch-get-string op "op") "link")
+          (dolist (side '("source" "target"))
+            (let ((target (%batch-get op side :type :hash-table)))
+              (when target
+                (let ((ref (%batch-get-string target "ref")))
+                  (when ref (setf (gethash ref refs) t)))))))))
+    refs))
+
+(defun %batch-orphan-warnings (ops-vec)
+  "Return warning strings for top-level create ops that look like orphaned
+hierarchy nodes: no children[] and no link op in the batch references them.
+This is the flat-vs-nested mistake that silently produces unparented issues."
+  (let ((link-refs (%batch-link-refs ops-vec))
+        (warnings '()))
+    (dotimes (i (length ops-vec))
+      (let ((op (aref ops-vec i)))
+        (when (string= (%batch-get-string op "op") "create")
+          (let ((children (%batch-get-array op "children"))
+                (ref (%batch-get-string op "ref"))
+                (title (%batch-get-string op "title")))
+            (when (and (or (null children) (zerop (length children)))
+                       (or (null ref) (not (gethash ref link-refs))))
+              (push (format nil
+                            "top-level create~@[ ref '~A'~]~@[ (~S)~] has no children[] and is not referenced by any link op; it becomes a flat issue (use children[] or a parent-child link)"
+                            ref title)
+                    warnings))))))
+    (nreverse warnings)))
+
 ;;; ============================================================================
 ;;; Main entry point
 ;;; ============================================================================
 
-(defun process-batch (store json-string &key idempotency-key source-repo)
+(defun process-batch (store json-string &key idempotency-key source-repo dry-run)
   "Process a batch of operations encoded as JSON.
 STORE is a beadwork store instance.
 SOURCE-REPO is the default source repository for create ops (a per-op
 \"repo\" field overrides it).  NIL leaves create-issue's own default.
 JSON-STRING is the JSON payload with an \"operations\" array.
-IDEMPOTENCY-KEY, if given, enables idempotent replay — retrying the same key
+IDEMPOTENCY-KEY, if given, enables idempotent replay -- retrying the same key
 returns the cached result instead of re-executing.
+DRY-RUN, when true, runs the whole batch inside the transaction and then
+rolls it back: nothing is persisted and the idempotency cache is neither
+read nor written.  The response marks itself with \"dry-run\": true.
 Returns a JSON string with {ok: true/false, results: [...], error: ...}."
   (let ((payload nil))
     ;; Parse JSON (validate before we check idempotency)
@@ -279,13 +315,16 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
              (setf (gethash "ok" ht) nil)
              (setf (gethash "error" ht) (format nil "~A" e))
              ht)))))
-    ;; Check idempotency — key can come from function parameter or JSON payload
+    ;; Check idempotency -- key can come from function parameter or JSON payload
     (let ((effective-key (or idempotency-key
                              (%batch-get-string payload "idempotency_key"))))
-      (when effective-key
-        (let ((cached (%check-idempotency store effective-key)))
-          (when cached
-            (return-from process-batch cached))))
+      ;; A dry run must not be served from, nor populate, the idempotency
+      ;; cache (bd-vcu).
+      (unless dry-run
+        (when effective-key
+          (let ((cached (%check-idempotency store effective-key)))
+            (when cached
+              (return-from process-batch cached)))))
     ;; Validate operations array
     (let ((ops-vec (%batch-get-array payload "operations")))
       (unless (and ops-vec (> (length ops-vec) 0))
@@ -329,14 +368,22 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
                        (t
                         (error 'beadwork-error :message
                                (format nil "Unknown operation type: '~A'" op-type))))))
-                 (sqlite:execute-non-query db "COMMIT")
+                 (if dry-run
+                     (sqlite:execute-non-query db "ROLLBACK")
+                     (sqlite:execute-non-query db "COMMIT"))
                  ;; Build success response
                  (let ((response-ht (make-hash-table :test #'equal)))
                    (setf (gethash "ok" response-ht) t)
                    (setf (gethash "results" response-ht) result-array)
+                   (when dry-run
+                     (setf (gethash "dry-run" response-ht) t))
+                   (let ((warnings (%batch-orphan-warnings ops-vec)))
+                     (when warnings
+                       (setf (gethash "warnings" response-ht)
+                             (coerce warnings 'vector))))
                    (let ((response-json (com.inuoe.jzon:stringify response-ht)))
-                     ;; Store for idempotency
-                     (when effective-key
+                     ;; Store for idempotency -- never for a dry run (bd-vcu)
+                     (when (and effective-key (not dry-run))
                        (%store-idempotency store effective-key response-json))
                      response-json)))
             ;; Rollback on any error during processing

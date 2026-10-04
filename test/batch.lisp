@@ -4,7 +4,7 @@
 
 (define-test batch-suite
   :parent beadwork-suite
-  :description "Tests for bw batch — bulk create/update/link/comment in one transaction")
+  :description "Tests for bw batch -- bulk create/update/link/comment in one transaction")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Helpers
@@ -376,6 +376,95 @@ CHECK constraint (bd-lu5)."
     (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"a\",\"title\":\"Should roll back\",\"type\":\"task\"},{\"op\":\"link\",\"source\":{\"ref\":\"a\"},\"target\":{\"ref\":\"does-not-exist\"},\"relation\":\"blocks\"}]}")
            (result (run-batch store json)))
       (false (batch-result-ok-p result))
-      ;; No issues should exist — transaction rolled back
+      ;; No issues should exist -- transaction rolled back
       (let ((issues (beadwork:list-issues store :source-repo nil)))
         (is equal 0 (length issues))))))
+
+;;; ============================================================================
+;;; Dry run (bd-vcu)
+;;; ============================================================================
+
+(define-test batch-dry-run-does-not-persist
+  :parent batch-suite
+  "bd-vcu: a dry run validates and reports would-be ids but must not write
+anything to the database."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"x\",\"title\":\"Dry run issue\",\"type\":\"task\"}]}")
+           (result (beadwork::process-batch store json :dry-run t))
+           (parsed (com.inuoe.jzon:parse result)))
+      (true (batch-result-ok-p parsed))
+      (true (batch-first-id parsed) "dry run still reports a would-be id")
+      (is equal 0 (length (beadwork:list-issues store :source-repo nil))
+          "dry run must not persist created issues"))))
+
+(define-test batch-dry-run-marks-response
+  :parent batch-suite
+  "A dry-run response is distinguishable from a committed one."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"x\",\"title\":\"Marker\",\"type\":\"task\"}]}")
+           (parsed (com.inuoe.jzon:parse
+                    (beadwork::process-batch store json :dry-run t))))
+      (true (gethash "dry-run" parsed)))))
+
+(define-test batch-dry-run-does-not-store-idempotency
+  :parent batch-suite
+  "bd-vcu: a dry run must not poison the idempotency cache. A real run with
+the same key afterwards must still create the issue."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"idempotency_key\":\"dry-key-1\",\"operations\":[{\"op\":\"create\",\"ref\":\"x\",\"title\":\"After dry run\",\"type\":\"task\"}]}")
+           (dry (com.inuoe.jzon:parse
+                 (beadwork::process-batch store json :dry-run t)))
+           (real (com.inuoe.jzon:parse
+                  (beadwork::process-batch store json))))
+      (true (batch-result-ok-p dry))
+      (true (batch-result-ok-p real))
+      (is equal 1 (length (beadwork:list-issues store :source-repo nil))
+          "the real run must create the issue; dry run must not have cached it"))))
+
+(define-test batch-dry-run-does-not-apply-links
+  :parent batch-suite
+  "Dry-run link ops are simulated inside the transaction and rolled back."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((a (beadwork:create-issue store :title "A" :type :task))
+           (json (format nil "{\"operations\":[{\"op\":\"link\",\"source\":{\"id\":\"~A\"},\"target\":{\"id\":\"~A\"},\"relation\":\"blocks\"}]}"
+                         (beadwork:issue-id a) (beadwork:issue-id a)))
+           (parsed (com.inuoe.jzon:parse
+                    (beadwork::process-batch store json :dry-run t))))
+      (true (batch-result-ok-p parsed))
+      (is equal 0 (length (beadwork:list-dependencies store (beadwork:issue-id a)))))))
+
+;;; ============================================================================
+;;; Orphaned-hierarchy warnings (bd-uz3)
+;;; ============================================================================
+
+(define-test batch-warns-on-unlinked-top-level-create
+  :parent batch-suite
+  "A top-level create with no children that no link op references is a
+likely-orphaned hierarchy and must produce a warning."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"epic\",\"title\":\"Lonely epic\",\"type\":\"epic\"},{\"op\":\"create\",\"ref\":\"other\",\"title\":\"Other\",\"type\":\"task\"}]}")
+           (parsed (run-batch store json))
+           (warnings (gethash "warnings" parsed)))
+      (true (batch-result-ok-p parsed))
+      (true (vectorp warnings))
+      (is equal 2 (length warnings)))))
+
+(define-test batch-no-warning-when-creates-are-linked
+  :parent batch-suite
+  "When every top-level ref is referenced by a link op, no warning fires."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"child\",\"title\":\"Child\",\"type\":\"task\"},{\"op\":\"create\",\"ref\":\"parent\",\"title\":\"Parent\",\"type\":\"epic\"},{\"op\":\"link\",\"source\":{\"ref\":\"child\"},\"target\":{\"ref\":\"parent\"},\"relation\":\"parent-child\"}]}")
+           (parsed (run-batch store json))
+           (warnings (gethash "warnings" parsed)))
+      (true (batch-result-ok-p parsed))
+      (is equal 0 (length (or warnings #()))))))
+
+(define-test batch-no-warning-when-create-has-children
+  :parent batch-suite
+  "A nested children[] create is not an orphaned top-level op."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"epic\",\"title\":\"Epic\",\"type\":\"epic\",\"children\":[{\"op\":\"create\",\"ref\":\"c1\",\"title\":\"Child\",\"type\":\"task\"}]}]}")
+           (parsed (run-batch store json))
+           (warnings (gethash "warnings" parsed)))
+      (true (batch-result-ok-p parsed))
+      (is equal 0 (length (or warnings #()))))))

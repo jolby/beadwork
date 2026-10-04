@@ -60,7 +60,6 @@
    #:issue-labels
    #:issue-dependencies
    #:issue-content-hash
-   #:issue-parent-id
    #:issue-source-repo
 
    ;; Storage protocol
@@ -80,6 +79,9 @@
    #:add-dependency
    #:remove-dependency
    #:list-dependencies
+   #:list-dependents
+   #:list-children
+   #:get-parent-id
    #:add-label
    #:remove-label
    #:get-labels

@@ -47,9 +47,9 @@ project root where .beads/ lives).  Return that directory's name as the
 source-repo.  Returns \".\" when no git repo is found before the project root.
 
 Examples:
-  repos/beadwork/src/ → finds .git at repos/beadwork/ → \"beadwork\"
-  worktrees/cogen-kb/feature/ → finds .git at worktrees/cogen-kb/ → \"cogen-kb\"
-  project root (cogen-meta/) → no .git before .beads/ → \".\""
+  repos/beadwork/src/ -> finds .git at repos/beadwork/ -> \"beadwork\"
+  worktrees/cogen-kb/feature/ -> finds .git at worktrees/cogen-kb/ -> \"cogen-kb\"
+  project root (cogen-meta/) -> no .git before .beads/ -> \".\""
   (let* ((beads-dir (find-beads-dir))
          (project-root (when beads-dir
                          (uiop:pathname-parent-directory-pathname beads-dir)))
@@ -177,11 +177,118 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
             (pad-right repo-str repo-w)
             title-str)))
 
-(defun print-issues (issues)
-  "Print a list of issues according to *format*."
+;;; ---------------------------------------------------------------------------
+;;; Graph neighbors (bd-uz3)
+;;; ---------------------------------------------------------------------------
+
+(defun %issue-brief-json (issue &optional relation)
+  "Build a compact JSON object for ISSUE, optionally tagged with RELATION."
+  (let ((ht (make-hash-table :test #'equal)))
+    (setf (gethash "id" ht) (issue-id issue))
+    (setf (gethash "title" ht) (issue-title issue))
+    (setf (gethash "status" ht)
+          (string-downcase (symbol-name (issue-status issue))))
+    (setf (gethash "priority" ht) (issue-priority issue))
+    (setf (gethash "issue-type" ht) (issue-type-string (issue-type issue)))
+    (when relation
+      (setf (gethash "relation" ht) (dependency-type-string relation)))
+    ht))
+
+(defun %issue-neighbors (store issue)
+  "Return a plist describing ISSUE's graph neighborhood.
+:PARENT is a parent id or NIL; :CHILDREN is a list of child issues;
+:DEPENDENCIES and :DEPENDENTS are lists of (relation . issue) pairs for
+the outgoing and incoming non parent-child edges."
+  (let* ((id (issue-id issue))
+         (parent (get-parent-id store id))
+         (children (list-children store id))
+         (dependencies
+           (loop for dep in (list-dependencies store id)
+                 unless (eq (dependency-dep-type dep) :parent-child)
+                   collect (cons (dependency-dep-type dep)
+                                 (get-issue store
+                                            (dependency-depends-on-id dep)))))
+         (dependents
+           (loop for dep in (list-dependents store id)
+                 unless (eq (dependency-dep-type dep) :parent-child)
+                   collect (cons (dependency-dep-type dep)
+                                 (get-issue store (dependency-issue-id dep))))))
+    (list :parent parent :children children
+          :dependencies dependencies :dependents dependents)))
+
+(defun issue->cli-json (issue &optional store)
+  "Build the CLI JSON object for ISSUE.  When STORE is given, include the
+graph neighborhood: parent, children, dependencies (outgoing) and
+dependents (incoming)."
+  (let ((ht (make-hash-table :test #'equal)))
+    (dolist (field (jzon:coerced-fields issue))
+      (destructuring-bind (name value &optional type) field
+        (declare (ignore type))
+        (setf (gethash (string name) ht) value)))
+    (when store
+      (let ((neighbors (%issue-neighbors store issue)))
+        (setf (gethash "parent" ht) (or (getf neighbors :parent) 'null))
+        (setf (gethash "children" ht)
+              (coerce (mapcar #'%issue-brief-json
+                              (getf neighbors :children))
+                      'vector))
+        (setf (gethash "dependencies" ht)
+              (coerce (mapcar (lambda (pair)
+                                (%issue-brief-json (cdr pair) (car pair)))
+                              (getf neighbors :dependencies))
+                      'vector))
+        (setf (gethash "dependents" ht)
+              (coerce (mapcar (lambda (pair)
+                                (%issue-brief-json (cdr pair) (car pair)))
+                              (getf neighbors :dependents))
+                      'vector))))
+    ht))
+
+(defun %print-issue-brief (issue relation)
+  "Print one compact relationship line for ISSUE."
+  (format t "    ~A  [~A]  ~A  ~A~@[  (~A)~]  ~A~%"
+          (issue-id issue)
+          (string-downcase (symbol-name (issue-status issue)))
+          (format-priority (issue-priority issue))
+          (string-downcase (symbol-name (issue-type issue)))
+          (when relation (dependency-type-string relation))
+          (issue-title issue)))
+
+(defun print-issue-neighbors (store issue)
+  "Print ISSUE's graph neighborhood (parent, children, dependencies,
+dependents) with one line per neighbor."
+  (let ((neighbors (%issue-neighbors store issue)))
+    (let ((parent (getf neighbors :parent))
+          (children (getf neighbors :children))
+          (dependencies (getf neighbors :dependencies))
+          (dependents (getf neighbors :dependents)))
+      (when (or parent children dependencies dependents)
+        (format t "~%Relationships:~%")
+        (when parent
+          (format t "  Parent:~%")
+          (%print-issue-brief (get-issue store parent) nil))
+        (when children
+          (format t "  Children:~%")
+          (dolist (child children)
+            (%print-issue-brief child nil)))
+        (when dependencies
+          (format t "  Depends on (blocked by):~%")
+          (dolist (pair dependencies)
+            (%print-issue-brief (cdr pair) (car pair))))
+        (when dependents
+          (format t "  Required by (blocks):~%")
+          (dolist (pair dependents)
+            (%print-issue-brief (cdr pair) (car pair))))))))
+
+(defun print-issues (issues &optional store)
+  "Print a list of issues according to *format*.  When STORE is given,
+the JSON form includes each issue's graph neighborhood."
   (ecase *format*
     (:json
-     (format t "~A" (jzon:stringify issues :pretty t)))
+     (format t "~A" (jzon:stringify
+                     (or (mapcar (lambda (i) (issue->cli-json i store)) issues)
+                         #())
+                     :pretty t)))
     (:plain
      (dolist (issue issues)
        (format t "~A~%" (format-issue-plain issue))))
@@ -230,11 +337,12 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                         (format-issue-rich issue
                                            id-w status-w pri-w type-w repo-w)))))))
 
-(defun print-issue-single (issue)
-  "Print a single issue in detail."
+(defun print-issue-single (issue &optional store)
+  "Print a single issue in detail.  When STORE is given, the plain/rich
+forms append the issue's graph neighborhood and the JSON form includes it."
   (ecase *format*
     (:json
-     (format t "~A" (jzon:stringify issue :pretty t)))
+     (format t "~A" (jzon:stringify (issue->cli-json issue store) :pretty t)))
     (:plain
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
@@ -249,7 +357,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
        (format t "~%~A~%" (issue-description issue)))
      (when (and (issue-notes issue)
                 (plusp (length (issue-notes issue))))
-       (format t "~%Notes:~%  ~A~%" (issue-notes issue))))
+       (format t "~%Notes:~%  ~A~%" (issue-notes issue)))
+     (when store
+       (print-issue-neighbors store issue)))
     (:rich
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
@@ -264,7 +374,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
        (format t "~%~A~%" (issue-description issue)))
      (when (and (issue-notes issue)
                 (plusp (length (issue-notes issue))))
-       (format t "~%Notes:~%  ~A~%" (issue-notes issue))))))
+       (format t "~%Notes:~%  ~A~%" (issue-notes issue)))
+     (when store
+       (print-issue-neighbors store issue)))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Global Options
@@ -378,7 +490,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                                :assignee assignee
                                :limit limit
                                :source-repo source-repo)))
-      (print-issues issues))))
+      (print-issues issues store))))
 
 (defun list/command ()
   (clingon:make-command
@@ -410,7 +522,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
         (if source-repo
             (format t "Ready work for ~{~A~^, ~} (~D issues):~%~%" source-repo (length issues))
             (format t "Ready work (~D issues):~%~%" (length issues))))
-      (print-issues issues))))
+      (print-issues issues store))))
 
 (defun ready/command ()
   (clingon:make-command
@@ -528,7 +640,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       (format *error-output* "Error: Issue ID required~%")
       (clingon:exit 1))
     (let ((issue (get-issue store id)))
-      (print-issue-single issue))))
+      (print-issue-single issue store))))
 
 (defun show/command ()
   (clingon:make-command
@@ -716,7 +828,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       (format *error-output* "Usage: bw dep add <child-id> [--blocks-on <parent-id>]~%")
       (clingon:exit 1))
     (add-dependency store child parent)
-    (format t "Added dependency: ~A blocks ~A~%" child parent)))
+    (format t "Added dependency: ~A is blocked by ~A~%" child parent)))
 
 (defun dep-add/command ()
   (clingon:make-command
@@ -735,7 +847,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       (format *error-output* "Usage: bw dep remove <child-id> <parent-id>~%")
       (clingon:exit 1))
     (remove-dependency store child parent)
-    (format t "Removed dependency: ~A -> ~A~%" child parent)))
+    (format t "Removed dependency: ~A no longer depends on ~A~%" child parent)))
 
 (defun dep-remove/command ()
   (clingon:make-command
@@ -755,10 +867,9 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       (format *error-output* "Usage: bw dep list <issue-id>~%")
       (clingon:exit 1))
     (let ((deps (list-dependencies store id)))
-      (format t "Dependencies for ~A:~%" id)
+      (format t "Dependencies for ~A (this issue depends on / is blocked by):~%" id)
       (dolist (dep deps)
-        (format t "  ~A -> ~A (~A)~%"
-                (dependency-issue-id dep)
+        (format t "  ~A  (~A)~%"
                 (dependency-depends-on-id dep)
                 (dependency-type-string (dependency-dep-type dep)))))))
 
@@ -982,7 +1093,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     (let ((issues (blocked-issues store)))
       (unless (eq *format* :json)
         (format t "Blocked issues (~D):~%~%" (length issues)))
-      (print-issues issues))))
+      (print-issues issues store))))
 
 (defun blocked/command ()
   (clingon:make-command
@@ -1049,7 +1160,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       (format *error-output* "Usage: bw search <query>~%")
       (clingon:exit 1))
     (let ((issues (search-issues store query)))
-      (print-issues issues))))
+      (print-issues issues store))))
 
 (defun search/command ()
   (clingon:make-command
@@ -1127,7 +1238,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
             (let ((last-action (getf current :last-action)))
               (when (and last-action (plusp (length last-action)))
                 (format t "Last action: ~A~%" last-action))))
-          ;; No active session — show previous handoff then start new
+          ;; No active session -- show previous handoff then start new
           (progn
             (let ((last (get-last-session store)))
               (when last
@@ -1424,7 +1535,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
     (let ((result (run-doctor-status-docs store status-dir)))
       (when (getf result :error)
         (clingon:exit 2))
-      ;; Soft-info (no What's Next section) — not an error, exit 0
+      ;; Soft-info (no What's Next section) -- not an error, exit 0
       (when (getf result :info)
         (clingon:exit 0))
       (let* ((summary (getf result :summary))
@@ -1441,7 +1552,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                            (list "missing" missing)
                            (list "orphan" orphan)
                            (list "healthy" healthy))))
-            (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN — exit ~D~%"
+            (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN -- exit ~D~%"
                     ok stale missing orphan (if healthy 0 1)))
         (clingon:exit (if healthy 0 1))))))
 
@@ -1453,13 +1564,13 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
    :handler #'doctor-health/handler))
 
 (defun doctor/handler (cmd)
-  "Flat 'bw doctor' — runs status-docs check by default."
+  "Flat 'bw doctor' -- runs status-docs check by default."
   (doctor-status-docs/handler cmd))
 
 (defun doctor/command ()
   (clingon:make-command
    :name "doctor"
-   :description "Run project-health diagnostics (status doc ↔ issue sync)"
+   :description "Run project-health diagnostics (status doc <-> issue sync)"
    :options (append (doctor/options) (global-options))
    :handler #'doctor/handler
    :sub-commands (list (doctor-status-docs/command)
@@ -1470,7 +1581,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
 ;;; ---------------------------------------------------------------------------
 
 (defun batch/handler (cmd)
-  "Handle bw batch — read JSON from stdin or --file, process, print result."
+  "Handle bw batch -- read JSON from stdin or --file, process, print result."
   ;; --example: print sample JSON payload and exit
   (when (clingon:getopt cmd :example)
     (princ *batch-example-json*)
@@ -1485,6 +1596,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
          (repo-val (clingon:getopt cmd :source-repo))
          (source-repo (or (when repo-val (first repo-val))
                           (detect-source-repo)))
+         (dry-run (clingon:getopt cmd :dry-run))
          (json-string
            (if file-path
                (uiop:read-file-string file-path)
@@ -1495,10 +1607,15 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
                  (format nil "~{~A~%~}" (nreverse lines))))))
     (let ((result (process-batch store json-string
                                  :idempotency-key idempotency-key
-                                 :source-repo source-repo)))
+                                 :source-repo source-repo
+                                 :dry-run dry-run)))
       (format t "~A~%" result)
-      ;; Exit non-zero if batch failed
-      (let ((parsed (com.inuoe.jzon:parse result)))
+      (let* ((parsed (com.inuoe.jzon:parse result))
+             (warnings (gethash "warnings" parsed)))
+        (when warnings
+          (dolist (w (coerce warnings 'list))
+            (format *error-output* "warning: ~A~%" w)))
+        ;; Exit non-zero if batch failed
         (unless (gethash "ok" parsed)
           (clingon:exit 1))))))
 
@@ -1519,7 +1636,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
       ]
     },
     { \"op\": \"link\", \"source\": { \"ref\": \"core\" }, \"target\": { \"ref\": \"ui\" }, \"relation\": \"blocks\" },
-    { \"op\": \"comment\", \"id\": { \"ref\": \"epic\" }, \"text\": \"Batched creation — edit this template\" }
+    { \"op\": \"comment\", \"id\": { \"ref\": \"epic\" }, \"text\": \"Batched creation -- edit this template\" }
   ]
 }"
   "Example JSON payload for bw batch --example.")
@@ -1541,7 +1658,7 @@ subcommand (e.g. 'bw --db DIR create ...' and 'bw create --db DIR ...')."
    (clingon:make-option
     :boolean/true
     :long-name "dry-run"
-    :description "Validate JSON without touching the database"
+    :description "Validate and simulate the JSON batch, then roll back (nothing is persisted)"
     :key :dry-run)
    (clingon:make-option
     :boolean/true
@@ -1559,6 +1676,9 @@ Payload is a JSON object with an 'operations' array. Each operation has an 'op' 
            \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"repo\":\"...\", \"children\":[...]}
   update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", ...}
   link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"}, \"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
+          DIRECTION: source depends on target. A blocks link means source is
+          BLOCKED BY target; parent-child makes source a child of target.
+          e.g. {source:{ref:child}, target:{ref:parent}, relation:\"parent-child\"}
   comment:{\"op\":\"comment\", \"id\":{\"ref\":\"x\"|\"id\":\"bd-xxx\"}, \"text\":\"...\"}
 Use --example to print a complete example payload."
    :options (append (batch/options) (global-options))

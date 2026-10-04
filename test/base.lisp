@@ -108,3 +108,50 @@ misleading."
       (is equal "cogen-source-code-tools" (beadwork:issue-source-repo issue))
       (is equal "cogen-source-code-tools"
                (beadwork:issue-source-repo (beadwork:get-issue store id))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Graph neighbors (bd-uz3)
+;;; ---------------------------------------------------------------------------
+
+(define-test get-parent-id-returns-parent
+  :parent beadwork-suite
+  "get-parent-id follows the parent-child dependency to the parent id."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((epic (beadwork:create-issue store :title "Epic" :type :epic))
+           (child (beadwork:create-issue store :title "Child" :type :task
+                                         :parent (beadwork:issue-id epic))))
+      (is equal (beadwork:issue-id epic)
+               (beadwork::get-parent-id store (beadwork:issue-id child)))
+      (is eq nil (beadwork::get-parent-id store (beadwork:issue-id epic))))))
+
+(define-test list-children-returns-direct-children
+  :parent beadwork-suite
+  "list-children returns the direct children of an issue, not grandchildren."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((epic (beadwork:create-issue store :title "Epic" :type :epic))
+           (epic-id (beadwork:issue-id epic))
+           (c1 (beadwork:create-issue store :title "Child one" :type :task
+                                       :parent epic-id))
+           (c2 (beadwork:create-issue store :title "Child two" :type :task
+                                       :parent epic-id)))
+      (let ((children (beadwork::list-children store epic-id)))
+        (is equal 2 (length children))
+        (true (find (beadwork:issue-id c1) children
+                    :key #'beadwork:issue-id :test #'equal))
+        (true (find (beadwork:issue-id c2) children
+                    :key #'beadwork:issue-id :test #'equal))))))
+
+(define-test list-dependents-returns-incoming-edges
+  :parent beadwork-suite
+  "list-dependents returns the dependencies pointing AT an issue (the
+issues that depend on it), mirroring list-dependencies (outgoing)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((a (beadwork:create-issue store :title "A" :type :task))
+           (b (beadwork:create-issue store :title "B" :type :task)))
+      (beadwork:add-dependency store (beadwork:issue-id b) (beadwork:issue-id a)
+                               :type :blocks)
+      (let ((dependents (beadwork::list-dependents store (beadwork:issue-id a))))
+        (is equal 1 (length dependents))
+        (is equal (beadwork:issue-id b)
+                 (beadwork:dependency-issue-id (first dependents)))
+        (is equal :blocks (beadwork:dependency-dep-type (first dependents)))))))

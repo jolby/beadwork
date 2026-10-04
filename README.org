@@ -1,4 +1,4 @@
-* Beadwork (bw) — Common Lisp Issue Tracker
+* Beadwork (bw) -- Common Lisp Issue Tracker
 
 Beadwork is a Common Lisp reimplementation of the original [[https://github.com/steveyegge/beads][beads]] issue tracker and its Rust port [[https://github.com/Dicklesworthstone/beads_rust][beads_rust]]. It aims for a subset of feature compatibility with the SQLite/JSONL datastore approach (not the newer Dolt database version).
 
@@ -6,7 +6,7 @@ It's designed to be interoperable with br (beads_rust), sharing the same `.beads
 
 **CLI Name:** =bw=
 
-**Status:** Alpha — Core commands working, dogfooding in progress
+**Status:** Alpha -- Core commands working, dogfooding in progress
 
 * Installation
 
@@ -89,6 +89,11 @@ bw reopen bd-123
 bw show bd-123
 #+end_src
 
+=show= also lists the issue's graph neighborhood (parent, children, blocking
+dependencies, and dependents) as a "Relationships" block. With
+=--format json= the same information appears under =parent=, =children=,
+=dependencies=, and =dependents=.
+
 **Ready (unblocked) issues:**
 
 #+begin_src sh
@@ -98,10 +103,37 @@ bw ready
 **Dependencies:**
 
 #+begin_src sh
-bw dep add bd-child bd-parent
+bw dep add bd-child bd-parent    # bd-child is blocked by bd-parent
 bw dep remove bd-child bd-parent
-bw dep list bd-123
+bw dep list bd-123               # bd-123 depends on / is blocked by ...
 #+end_src
+
+*Direction matters:* a dependency is stored as =(dependent, depends-on)=, so
+=source= depends on =target=. In a =bw batch= link op, =source= is the
+blocked/child side and =target= is the blocker/parent side:
+
+#+begin_src json
+{ "op": "link", "source": { "id": "bd-X" }, "target": { "id": "bd-Y" }, "relation": "blocks" }
+#+end_src
+
+makes =bd-X= blocked by =bd-Y= (not the other way around).
+
+Relation vocabulary: =blocks=, =parent-child=, =conditional-blocks=,
+=waits-for=, =related=, =discovered-from=, =replies-to=, =relates-to=,
+=duplicates=, =supersedes=, =caused-by=. Only =blocks=,
+=conditional-blocks=, =waits-for=, and =parent-child= affect =bw ready=
+and =bw blocked=.
+
+**Batch operations:**
+
+#+begin_src sh
+bw batch --file /tmp/batch.json            # create/update/link/comment atomically
+bw batch --example                         # print a sample payload
+bw batch --file /tmp/batch.json --dry-run  # validate + simulate, then roll back
+#+end_src
+
+=--dry-run= runs the whole batch in a transaction and rolls it back: nothing
+is persisted and the idempotency key is neither read nor written.
 
 **Labels:**
 
@@ -175,9 +207,9 @@ bw list --format rich     # Rich terminal output (default)
 
 Beadwork looks for a =.beads/= directory starting from the current directory and walking upward. The directory should contain:
 
-- =beads.db= — SQLite database
-- =config.yaml= — Configuration (optional)
-- =issues.jsonl= — JSONL export for git sync
+- =beads.db= -- SQLite database
+- =config.yaml= -- Configuration (optional)
+- =issues.jsonl= -- JSONL export for git sync
 
 * Development
 
@@ -216,7 +248,7 @@ Beadwork implements a subset of the original beads/br feature set, focusing on t
 - Both tools read/write the same =.beads/beads.db=
 - JSONL export/import is compatible
 
-Note: Beadwork does not implement all features of br — it's a ground-up CL implementation with a focused scope for human and agentic workflows.
+Note: Beadwork does not implement all features of br -- it's a ground-up CL implementation with a focused scope for human and agentic workflows.
 
 * License
 
