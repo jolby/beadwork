@@ -36,12 +36,13 @@
          (formatted (beadwork::format-timestamp original))
          (parsed (beadwork::parse-timestamp formatted)))
     (true parsed "parse-timestamp returned NIL for ~s" formatted)
-    ;; Timestamps should be equal to within 1 second (since we lose
-    ;; nanosecond precision in the round-trip)
-    (true (local-time:timestamp= original parsed)
-          "Round-trip failed: ~s vs ~s"
-          (beadwork::format-timestamp original)
-          (beadwork::format-timestamp parsed))))
+    ;; format-timestamp intentionally truncates to microsecond precision
+    ;; (bd-bx0), so ORIGINAL can differ from PARSED below microsecond
+    ;; resolution. Compare the rendered (microsecond) forms instead of using
+    ;; local-time:timestamp=, which is exact (bd-9hh).
+    (is equal formatted (beadwork::format-timestamp parsed)
+        "Round-trip failed: ~s vs ~s" formatted
+        (beadwork::format-timestamp parsed))))
 
 (define-test timestamp-backward-compat-parse
   :parent beadwork-suite
