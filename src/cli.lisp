@@ -203,16 +203,19 @@ the outgoing and incoming non parent-child edges."
          (parent (get-parent-id store id))
          (children (list-children store id))
          (dependencies
+           ;; Skip a dangling endpoint rather than signalling (bd-wux).
            (loop for dep in (list-dependencies store id)
                  unless (eq (dependency-dep-type dep) :parent-child)
-                   collect (cons (dependency-dep-type dep)
-                                 (get-issue store
-                                            (dependency-depends-on-id dep)))))
+                   append (let ((target (find-issue store
+                                                    (dependency-depends-on-id dep))))
+                            (when target
+                              (list (cons (dependency-dep-type dep) target))))))
          (dependents
            (loop for dep in (list-dependents store id)
                  unless (eq (dependency-dep-type dep) :parent-child)
-                   collect (cons (dependency-dep-type dep)
-                                 (get-issue store (dependency-issue-id dep))))))
+                   append (let ((source (find-issue store (dependency-issue-id dep))))
+                            (when source
+                              (list (cons (dependency-dep-type dep) source)))))))
     (list :parent parent :children children
           :dependencies dependencies :dependents dependents)))
 
@@ -265,8 +268,10 @@ dependents) with one line per neighbor."
       (when (or parent children dependencies dependents)
         (format t "~%Relationships:~%")
         (when parent
-          (format t "  Parent:~%")
-          (%print-issue-brief (get-issue store parent) nil))
+          (let ((parent-issue (find-issue store parent)))
+            (when parent-issue
+              (format t "  Parent:~%")
+              (%print-issue-brief parent-issue nil))))
         (when children
           (format t "  Children:~%")
           (dolist (child children)

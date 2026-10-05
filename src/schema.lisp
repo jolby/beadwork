@@ -94,7 +94,8 @@
         metadata TEXT DEFAULT '{}',
         thread_id TEXT DEFAULT '',
         PRIMARY KEY (issue_id, depends_on_id),
-        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE,
+        FOREIGN KEY (depends_on_id) REFERENCES issues(id) ON DELETE CASCADE
     )"
    "CREATE INDEX IF NOT EXISTS idx_dependencies_issue ON dependencies(issue_id)"
    "CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on ON dependencies(depends_on_id)"

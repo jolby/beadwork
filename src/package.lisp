@@ -68,6 +68,7 @@
    #:with-store
    #:create-issue
    #:get-issue
+   #:find-issue
    #:update-issue
    #:close-issue
    #:reopen-issue

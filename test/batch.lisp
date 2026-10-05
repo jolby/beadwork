@@ -468,3 +468,17 @@ likely-orphaned hierarchy and must produce a warning."
            (warnings (gethash "warnings" parsed)))
       (true (batch-result-ok-p parsed))
       (is equal 0 (length (or warnings #()))))))
+
+(define-test batch-link-fails-on-unknown-id
+  :parent batch-suite
+  "bd-wux: a link endpoint that is not an existing issue is rejected and not
+stored (previously it became a dangling edge and broke ready/list)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((a (beadwork:create-issue store :title "A" :type :task))
+           (aid (beadwork:issue-id a))
+           (json (format nil
+                         "{\"operations\":[{\"op\":\"link\",\"source\":{\"id\":\"~A\"},\"target\":{\"id\":\"Decision D1 from the L0-L6 matrix\"},\"relation\":\"blocks\"}]}"
+                         aid))
+           (result (run-batch store json)))
+      (false (batch-result-ok-p result))
+      (is equal 0 (length (beadwork:list-dependencies store aid))))))

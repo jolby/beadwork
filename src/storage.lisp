@@ -337,6 +337,14 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
       (error 'issue-not-found :issue-id id :message (format nil "Issue ~A not found" id)))
     (row-to-issue (first rows))))
 
+(defun find-issue (store id)
+  "Like GET-ISSUE, but return NIL instead of signalling when ID is unknown.
+
+Use when walking graph edges: a dangling endpoint (legacy data, or a row
+written before validation existed) must not abort a listing or render (bd-wux)."
+  (handler-case (get-issue store id)
+    (issue-not-found () nil)))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Update Issue
 ;;; ---------------------------------------------------------------------------
@@ -565,7 +573,12 @@ Signals ISSUE-NOT-FOUND if the issue doesn't exist."
 ;;; ---------------------------------------------------------------------------
 
 (defun add-dependency (store issue-id depends-on-id &key (type :blocks))
-  "Insert a dependency relationship between two issues."
+  "Insert a dependency relationship between two issues.
+
+Both endpoints must be existing issues: signals ISSUE-NOT-FOUND otherwise, so a
+typo or a pasted description cannot become a dangling edge (bd-wux)."
+  (get-issue store issue-id)
+  (get-issue store depends-on-id)
   (let ((now-str (format-timestamp (local-time:now))))
     (sqlite:execute-non-query
      (store-db store)
@@ -626,14 +639,16 @@ LIST-DEPENDENCIES."
 
 (defun list-children (store parent-id)
   "Return the direct children of PARENT-ID as issue objects, ordered by id.
-Walks parent-child dependencies whose depends_on_id is PARENT-ID."
-  (mapcar (lambda (row) (get-issue store (first row)))
-          (sqlite:execute-to-list
-           (store-db store)
-           "SELECT issue_id FROM dependencies
-            WHERE depends_on_id = ? AND type = 'parent-child'
-            ORDER BY issue_id"
-           parent-id)))
+Walks parent-child dependencies whose depends_on_id is PARENT-ID. A dangling
+child id (legacy data) is skipped rather than signalling (bd-wux)."
+  (loop for row in (sqlite:execute-to-list
+                    (store-db store)
+                    "SELECT issue_id FROM dependencies
+                     WHERE depends_on_id = ? AND type = 'parent-child'
+                     ORDER BY issue_id"
+                    parent-id)
+        for child = (find-issue store (first row))
+        when child collect child))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Labels

@@ -155,3 +155,68 @@ issues that depend on it), mirroring list-dependencies (outgoing)."
         (is equal (beadwork:issue-id b)
                  (beadwork:dependency-issue-id (first dependents)))
         (is equal :blocks (beadwork:dependency-dep-type (first dependents)))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Dependency endpoint validation + dangling-edge robustness (bd-wux)
+;;; ---------------------------------------------------------------------------
+
+(defun plant-dependency-row (store issue-id depends-on-id type)
+  "Insert a dependency row directly, bypassing validation and foreign keys, to
+simulate a legacy dangling edge (bd-wux)."
+  (let ((db (beadwork:store-db store)))
+    (sqlite:execute-non-query db "PRAGMA foreign_keys=OFF")
+    (sqlite:execute-non-query db
+     "INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by)
+      VALUES (?, ?, ?, '2026-01-01T00:00:00Z', '')"
+     issue-id depends-on-id type)
+    (sqlite:execute-non-query db "PRAGMA foreign_keys=ON")))
+
+(define-test add-dependency-rejects-unknown-target
+  :parent beadwork-suite
+  "bd-wux: a pasted description (or any unknown id) must not become an edge."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((a (beadwork:create-issue store :title "A" :type :task))
+           (aid (beadwork:issue-id a)))
+      (fail (beadwork:add-dependency store aid
+                                     "Decision D1 from the L0-L6 matrix")
+            'beadwork:issue-not-found)
+      (is equal 0 (length (beadwork:list-dependencies store aid))))))
+
+(define-test add-dependency-rejects-unknown-source
+  :parent beadwork-suite
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((a (beadwork:create-issue store :title "A" :type :task))
+           (aid (beadwork:issue-id a)))
+      (fail (beadwork:add-dependency store "bd-missing" aid)
+            'beadwork:issue-not-found)
+      (is equal 0 (length (beadwork:list-dependents store aid))))))
+
+(define-test find-issue-returns-nil-when-unknown
+  :parent beadwork-suite
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (is eq nil (beadwork:find-issue store "bd-missing"))
+    (let ((a (beadwork:create-issue store :title "A" :type :task)))
+      (is equal (beadwork:issue-id a)
+                (beadwork:issue-id
+                 (beadwork:find-issue store (beadwork:issue-id a)))))))
+
+(define-test issue-graph-render-survives-dangling-dependency
+  :parent beadwork-suite
+  "bd-wux: a legacy edge whose target is not an issue must not abort graph
+rendering (bw list/show/ready render neighbors)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let ((a (beadwork:create-issue store :title "A" :type :task)))
+      (plant-dependency-row store (beadwork:issue-id a)
+                            "prose that is not an issue id" "blocks")
+      ;; Must not signal; the dangling edge is simply not rendered.
+      (let ((json (beadwork::issue->cli-json a store)))
+        (is equal 0 (length (gethash "dependencies" json)))))))
+
+(define-test list-children-skips-dangling-child
+  :parent beadwork-suite
+  "bd-wux: a parent-child edge to a non-existent child is skipped, not fatal."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((p (beadwork:create-issue store :title "P" :type :epic))
+           (pid (beadwork:issue-id p)))
+      (plant-dependency-row store "bd-ghost-child" pid "parent-child")
+      (is equal 0 (length (beadwork:list-children store pid))))))

@@ -206,6 +206,15 @@ Uses upsert so that linking an already-dependent issue updates the type."
          (source-id (%resolve-ref source-ht))
          (target-id (%resolve-ref target-ht))
          (now-str (format-timestamp (local-time:now))))
+    ;; Validate endpoints (bd-wux): %resolve-ref only resolves {ref}/{id}; it does
+    ;; not check existence, so an unknown id or pasted prose would otherwise become
+    ;; a dangling edge (and then crash ready/list rendering).
+    (unless (find-issue store source-id)
+      (error 'beadwork-error :message
+             (format nil "Unknown issue '~A' in link source" source-id)))
+    (unless (find-issue store target-id)
+      (error 'beadwork-error :message
+             (format nil "Unknown issue '~A' in link target" target-id)))
     ;; Use INSERT OR REPLACE so children[]-created parent-child deps
     ;; can be upgraded to explicit types without UNIQUE violations.
     (sqlite:execute-non-query
