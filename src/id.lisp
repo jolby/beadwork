@@ -17,6 +17,15 @@
   "Default number of base-36 characters for the hash portion of an ID.
 Matches br's min_hash_length default.")
 
+(define-constant +max-hash-length+ 8
+  :documentation
+  "Maximum base-36 hash length for the hash portion of an ID.
+Matches br's max_hash_length default (spec 11.1.1).")
+
+(defparameter *id-collision-retries* 10
+  "Fresh-nonce attempts per hash length in GENERATE-UNIQUE-ID before the
+length is grown.  Mirrors br's nonce 0..9 collision fallback.")
+
 (defun base36-encode (bytes n)
   "Encode BYTES (an octet vector) as a base-36 string of length N.
 Treats the byte vector as a big-endian unsigned integer and extracts N
@@ -51,6 +60,31 @@ br's ID generation algorithm (§11.1)."
     (ironclad:update-digest digester nonce)
     (let ((hash-bytes (ironclad:produce-digest digester)))
       (format nil "~A-~A" prefix (base36-encode hash-bytes hash-length)))))
+
+(defun generate-unique-id (title &key (prefix "bd")
+                                     (min-length +default-hash-length+)
+                                     (max-length +max-hash-length+)
+                                     (exists-p (constantly nil)))
+  "Generate an ID for TITLE that EXISTS-P does not already claim.
+
+Retries with a fresh nonce up to *ID-COLLISION-RETRIES* times at each hash
+length from MIN-LENGTH through MAX-LENGTH, growing the length once the retries
+are exhausted.  This is the collision fallback br performs (spec 11.1 / 15.27)
+and keeps CREATE-ISSUE from raising a raw UNIQUE-constraint error.
+
+EXISTS-P is called with a candidate ID string and should return true when the
+ID is already taken.  Signals BEADWORK-ERROR if no free ID is found."
+  (loop for length from min-length to max-length
+        do (loop repeat *id-collision-retries*
+                 for candidate = (generate-id title :prefix prefix
+                                              :hash-length length)
+                 unless (funcall exists-p candidate)
+                   do (return-from generate-unique-id candidate)))
+  (error 'beadwork-error
+         :message (format nil
+                          "Could not generate a unique ID for ~S after ~D attempts"
+                          title (* (1+ (- max-length min-length))
+                                   *id-collision-retries*))))
 
 (defun generate-child-id (parent-id child-number)
   "Generate a hierarchical child ID: PARENT-ID.CHILD-NUMBER.

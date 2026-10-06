@@ -220,3 +220,47 @@ rendering (bw list/show/ready render neighbors)."
            (pid (beadwork:issue-id p)))
       (plant-dependency-row store "bd-ghost-child" pid "parent-child")
       (is equal 0 (length (beadwork:list-children store pid))))))
+
+;;; ---------------------------------------------------------------------------
+;;; ID collision retries beyond create-issue (bd-pvz)
+;;; ---------------------------------------------------------------------------
+
+(define-test create-child-id-heals-stale-counter
+  :parent beadwork-suite
+  "bd-pvz: a parent whose dotted children were imported without reconciling
+child_counters (spec 11.2) must still yield a fresh child id, not a raw
+UNIQUE-constraint error."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((p (beadwork:create-issue store :title "Parent" :type :epic))
+           (pid (beadwork:issue-id p)))
+      ;; Simulate an import: an explicit dotted child row with no counter entry.
+      (sqlite:execute-non-query (beadwork:store-db store)
+        "INSERT INTO issues (id, title, status, priority, issue_type, created_at, updated_at, created_by, owner, content_hash)
+         VALUES (?, 'Imported child', 'open', 2, 'task', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '', '', 'h')"
+        (format nil "~A.1" pid))
+      (let ((child (beadwork:create-issue store :title "New child" :type :task
+                                         :parent pid)))
+        (is equal (format nil "~A.2" pid) (beadwork:issue-id child))))))
+
+(define-test start-session-retries-id-collision
+  :parent beadwork-suite
+  "bd-pvz: a session id colliding with an existing row must be retried, not
+surfaced as a raw UNIQUE-constraint error."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((first (beadwork::start-session store))
+           (first-id (getf first :id))
+           (calls 0)
+           (orig (symbol-function 'beadwork:generate-id)))
+      (unwind-protect
+           (progn
+             (beadwork::end-session store first-id :notes "done")
+             (setf (symbol-function 'beadwork:generate-id)
+                   (lambda (&rest args)
+                     (declare (ignore args))
+                     (incf calls)
+                     (if (= calls 1) first-id "S-fresh2")))
+             (let ((second (beadwork::start-session store)))
+               (true second)
+               (false (equal first-id (getf second :id)))
+               (true (>= calls 1))))
+        (setf (symbol-function 'beadwork:generate-id) orig)))))

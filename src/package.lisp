@@ -117,6 +117,7 @@
 
    ;; ID generation
    #:generate-id
+   #:generate-unique-id
    #:generate-child-id
    #:base36-encode
    #:compute-content-hash

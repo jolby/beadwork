@@ -164,9 +164,11 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
                       (when child-ref (setf (gethash "ref" child-result-ht) child-ref))
                       (setf (gethash "id" child-result-ht) child-id)
                       (vector-push-extend child-result-ht result-array))
-                    ;; Recurse into grand-children
+                    ;; Reject grand-children. An empty children[] means "none",
+                    ;; so guard on length, not truthiness (bd-pvz: a serializer
+                    ;; that always emits children[] otherwise trips this error).
                     (let ((grand-children (%batch-get-array child-op "children")))
-                      (when grand-children
+                      (when (and grand-children (plusp (length grand-children)))
                         (error 'beadwork-error :message
                                "Nested children beyond one level are not supported -- use explicit link operations for deeper hierarchies")))))))))
         id))))

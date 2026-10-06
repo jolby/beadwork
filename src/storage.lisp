@@ -250,6 +250,12 @@ Column order must match the canonical SELECT order used throughout this file."
 ;;; Create Issue
 ;;; ---------------------------------------------------------------------------
 
+(defun issue-id-exists-p (store id)
+  "Return true when ID is already used by an issue row."
+  (and (sqlite:execute-single (store-db store)
+                              "SELECT 1 FROM issues WHERE id = ?" id)
+       t))
+
 (defun next-child-number (store parent-id)
   "Get and increment the child counter for PARENT-ID. Returns the next child number."
   (let* ((db (store-db store))
@@ -264,6 +270,17 @@ Column order must match the canonical SELECT order used throughout this file."
      parent-id next)
     next))
 
+(defun next-free-child-id (store parent-id)
+  "Return the next free dotted child id for PARENT-ID.
+
+Advances CHILD-COUNTERS, but skips candidate ids that already exist -- e.g.
+children imported with explicit ids whose counter was never reconciled
+(spec 11.2) -- so the INSERT cannot fail with a raw UNIQUE constraint (bd-pvz)."
+  (loop for number = (next-child-number store parent-id)
+        for candidate = (generate-child-id parent-id number)
+        unless (issue-id-exists-p store candidate)
+          do (return candidate)))
+
 (defun create-issue (store &key title (type :task) (priority 2) description
                               parent assignee owner source-repo)
   "Create a new issue in the database. Returns the created issue object.
@@ -274,8 +291,14 @@ If PARENT is given, generates a child ID and adds a parent-child dependency."
          (now (local-time:now))
          (now-str (format-timestamp now))
          (id (if parent
-                 (generate-child-id parent (next-child-number store parent))
-                 (generate-id title :prefix prefix)))
+                 (next-free-child-id store parent)
+                 ;; Collision-proof: retry the random hash instead of letting
+                 ;; an id clash surface as a raw UNIQUE-constraint error
+                 ;; (bd-pvz).
+                 (generate-unique-id
+                  title :prefix prefix
+                  :exists-p (lambda (candidate)
+                              (issue-id-exists-p store candidate)))))
          (issue (make-instance 'issue
                   :id id
                   :title title
@@ -791,7 +814,14 @@ Returns a plist with session data or NIL if a session is already active."
     (let ((current (get-current-session store)))
       (when current
         (return-from start-session nil)))
-    (let* ((id (generate-id "session" :prefix "S"))
+    (let* ((id (generate-unique-id
+                "session" :prefix "S"
+                ;; Sessions use their own id space; check the sessions table
+                ;; rather than issues (bd-pvz).
+                :exists-p (lambda (candidate)
+                            (and (sqlite:execute-single
+                                  db "SELECT 1 FROM sessions WHERE id = ?" candidate)
+                                 t))))
            (now-str (format-timestamp (local-time:now))))
       (sqlite:execute-non-query
        db

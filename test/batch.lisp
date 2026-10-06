@@ -469,6 +469,67 @@ likely-orphaned hierarchy and must produce a warning."
       (true (batch-result-ok-p parsed))
       (is equal 0 (length (or warnings #()))))))
 
+;;; ============================================================================
+;;; Mixed payload regressions (bd-pvz)
+;;; ============================================================================
+
+(define-test batch-nested-empty-children-array-allowed
+  :parent batch-suite
+  "bd-pvz: an empty children[] on a nested create op is not a deeper
+hierarchy -- it must not trigger the one-level nesting guard."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"epic\",\"title\":\"Mixed epic\",\"type\":\"epic\",\"children\":[{\"op\":\"create\",\"ref\":\"c1\",\"title\":\"Child one\",\"type\":\"task\",\"children\":[]},{\"op\":\"create\",\"ref\":\"c2\",\"title\":\"Child two\",\"type\":\"task\",\"children\":[]},{\"op\":\"create\",\"ref\":\"c3\",\"title\":\"Child three\",\"type\":\"task\",\"children\":[]}]},{\"op\":\"comment\",\"id\":{\"ref\":\"epic\"},\"text\":\"batched\"}]}")
+           (result (run-batch store json)))
+      (true (batch-result-ok-p result))
+      (is equal 4 (length (beadwork:list-issues store :source-repo nil))))))
+
+(define-test batch-create-retries-id-collision
+  :parent batch-suite
+  "bd-pvz: a generated top-level id colliding with an existing issue must be
+retried, not surfaced as a raw UNIQUE-constraint error."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store :title "Existing" :type :task))
+           (existing-id (beadwork:issue-id existing))
+           (calls 0)
+           (orig (symbol-function 'beadwork:generate-id)))
+      (unwind-protect
+           (progn
+             (setf (symbol-function 'beadwork:generate-id)
+                   (lambda (&rest args)
+                     (declare (ignore args))
+                     (incf calls)
+                     (if (= calls 1)
+                         existing-id
+                         (format nil "bd-fresh~D" calls))))
+             (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"x\",\"title\":\"Collision\",\"type\":\"task\"}]}")
+                    (result (run-batch store json))
+                    (id (batch-first-id result)))
+               (true (batch-result-ok-p result))
+               (false (equal existing-id id))
+               (true (beadwork:get-issue store id))))
+        (setf (symbol-function 'beadwork:generate-id) orig)))))
+
+(define-test batch-mixed-create-link-update-comment-succeeds
+  :parent batch-suite
+  "bd-pvz: the exact reported payload -- create an epic with three children
+(each carrying an empty children[]), link an existing issue under the epic,
+update that issue, and comment on it -- commits atomically."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store :title "Existing" :type :task))
+           (existing-id (beadwork:issue-id existing))
+           (json (format nil
+                         "{\"operations\":[{\"op\":\"create\",\"ref\":\"epic\",\"title\":\"Mixed epic\",\"type\":\"epic\",\"children\":[{\"op\":\"create\",\"ref\":\"c1\",\"title\":\"Child one\",\"type\":\"task\",\"children\":[]},{\"op\":\"create\",\"ref\":\"c2\",\"title\":\"Child two\",\"type\":\"task\",\"children\":[]},{\"op\":\"create\",\"ref\":\"c3\",\"title\":\"Child three\",\"type\":\"task\",\"children\":[]}]},{\"op\":\"link\",\"source\":{\"id\":\"~A\"},\"target\":{\"ref\":\"epic\"},\"relation\":\"parent-child\"},{\"op\":\"update\",\"id\":\"~A\",\"title\":\"Existing updated\",\"description\":\"updated description\"},{\"op\":\"comment\",\"id\":{\"id\":\"~A\"},\"text\":\"batch comment\"}]}"
+                         existing-id existing-id existing-id))
+           (result (run-batch store json))
+           (epic-id (gethash "id" (aref (gethash "results" result) 0)))
+           (updated (beadwork:get-issue store existing-id)))
+      (true (batch-result-ok-p result))
+      (is equal 5 (length (beadwork:list-issues store :source-repo nil)))
+      (is equal "Existing updated" (beadwork:issue-title updated))
+      (is equal "updated description" (beadwork:issue-description updated))
+      (is equal epic-id (beadwork::get-parent-id store existing-id))
+      (is equal 1 (length (beadwork:list-comments store existing-id))))))
+
 (define-test batch-link-fails-on-unknown-id
   :parent batch-suite
   "bd-wux: a link endpoint that is not an existing issue is rejected and not
