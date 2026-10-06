@@ -38,6 +38,7 @@
                 ((:file "package")
                  (:file "suite")
                  (:file "base")
+                 (:file "session")
                  (:file "timestamp")
                  (:file "sync")
                  (:file "doctor")

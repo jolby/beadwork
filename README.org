@@ -164,6 +164,10 @@ bw session status              # Active issue, uptime, last breadcrumb
 bw session work bd-123        # Set active issue for this session
 bw session action "Found root cause"  # Breadcrumb (auto-comments)
 bw session end --notes "Next: dark mode"  # End with handoff
+bw session list                # Recent 20 sessions (--all, --limit N,
+                               #   --active, --agent-id X, --format json)
+bw session show                # Last session in detail (handoff notes)
+bw session show S-abc          # A specific session
 #+end_src
 
 **Comments:**

@@ -847,47 +847,79 @@ Returns a plist with session data or NIL if a session is already active."
      now-str (or notes "") session-id)
     (values)))
 
+(defparameter +session-columns+
+  "id, started_at, ended_at, active_issue_id, handoff_notes, last_action, agent_id, agent_session_id"
+  "Canonical column list for SELECT on the sessions table.")
+
+(defun %row-to-session (row)
+  "Map a sessions SELECT row to a session plist."
+  (destructuring-bind (id started-at ended-at active-issue-id
+                       handoff-notes last-action agent-id agent-session-id)
+      row
+    (list :id id
+          :started-at (parse-timestamp started-at)
+          :ended-at (when ended-at (parse-timestamp ended-at))
+          :active-issue-id active-issue-id
+          :handoff-notes (or handoff-notes "")
+          :last-action (or last-action "")
+          :agent-id (or agent-id "")
+          :agent-session-id (or agent-session-id ""))))
+
 (defun get-current-session (store)
   "Return the active session as a plist, or NIL if none."
   (let ((rows (sqlite:execute-to-list
                (store-db store)
-               "SELECT id, started_at, ended_at, active_issue_id,
-                       handoff_notes, last_action, agent_id, agent_session_id
-                FROM sessions WHERE ended_at IS NULL
-                ORDER BY started_at DESC LIMIT 1")))
+               (format nil "SELECT ~A FROM sessions WHERE ended_at IS NULL
+                            ORDER BY started_at DESC LIMIT 1"
+                       +session-columns+))))
     (when rows
-      (destructuring-bind (id started-at ended-at active-issue-id
-                           handoff-notes last-action agent-id agent-session-id)
-          (first rows)
-        (list :id id
-              :started-at (parse-timestamp started-at)
-              :ended-at (when ended-at (parse-timestamp ended-at))
-              :active-issue-id active-issue-id
-              :handoff-notes (or handoff-notes "")
-              :last-action (or last-action "")
-              :agent-id (or agent-id "")
-              :agent-session-id (or agent-session-id ""))))))
+      (%row-to-session (first rows)))))
 
 (defun get-last-session (store)
   "Return the most recently ended session as a plist, or NIL if none."
   (let ((rows (sqlite:execute-to-list
                (store-db store)
-               "SELECT id, started_at, ended_at, active_issue_id,
-                       handoff_notes, last_action, agent_id, agent_session_id
-                FROM sessions WHERE ended_at IS NOT NULL
-                ORDER BY ended_at DESC LIMIT 1")))
+               (format nil "SELECT ~A FROM sessions WHERE ended_at IS NOT NULL
+                            ORDER BY ended_at DESC LIMIT 1"
+                       +session-columns+))))
     (when rows
-      (destructuring-bind (id started-at ended-at active-issue-id
-                           handoff-notes last-action agent-id agent-session-id)
-          (first rows)
-        (list :id id
-              :started-at (parse-timestamp started-at)
-              :ended-at (parse-timestamp ended-at)
-              :active-issue-id active-issue-id
-              :handoff-notes (or handoff-notes "")
-              :last-action (or last-action "")
-              :agent-id (or agent-id "")
-              :agent-session-id (or agent-session-id ""))))))
+      (%row-to-session (first rows)))))
+
+(defun get-session (store session-id)
+  "Return the session plist for SESSION-ID, or NIL when there is no such row."
+  (let ((rows (sqlite:execute-to-list
+               (store-db store)
+               (format nil "SELECT ~A FROM sessions WHERE id = ? LIMIT 1"
+                       +session-columns+)
+               session-id)))
+    (when rows
+      (%row-to-session (first rows)))))
+
+(defun list-sessions (store &key limit active agent-id issue-id)
+  "Return session plists, newest first (ORDER BY started_at DESC).
+
+LIMIT caps the row count; ACTIVE restricts to sessions with no ENDED_AT;
+AGENT-ID and ISSUE-ID restrict to sessions by that agent / working that issue.
+Filters compose with AND."
+  (let ((clauses (list "1=1"))
+        (params nil))
+    (when active
+      (push "ended_at IS NULL" clauses))
+    (when agent-id
+      (push "agent_id = ?" clauses)
+      (push agent-id params))
+    (when issue-id
+      (push "active_issue_id = ?" clauses)
+      (push issue-id params))
+    (let ((sql (format nil "SELECT ~A FROM sessions WHERE ~{~A~^ AND ~}
+                           ORDER BY started_at DESC"
+                       +session-columns+ (nreverse clauses))))
+      (when limit
+        (setf sql (format nil "~A LIMIT ?" sql))
+        (push limit params))
+      (let ((rows (apply #'sqlite:execute-to-list
+                         (store-db store) sql (nreverse params))))
+        (mapcar #'%row-to-session rows)))))
 
 (defun set-session-work (store session-id issue-id)
   "Set the active issue for SESSION-ID."
