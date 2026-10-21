@@ -820,6 +820,41 @@ no quoting, and an argument with a space stays one argument."
       (is = 1 code "a non-empty . bucket is a failure for this subcommand")
       (is = 1 (gethash "count" (bw-json out))))))
 
+(define-test cli-broken-pipe-does-not-hang
+  :parent cli-suite
+  "A reader that exits early must not leave bw spinning.
+
+`bw list --format json | head -3` used to spin at 100% CPU forever: when the
+reader closes mid-buffer, SBCL's fd-stream output path retries without
+progress, so no condition reaches Lisp and no handler can run.  The binary
+restores the default SIGPIPE action, so it dies like a Unix filter (141).
+
+The payload must exceed one pipe buffer (64 KiB), otherwise the whole write
+lands in the pipe and there is nothing to fail."
+  (let* ((db (bw-case-dir "sigpipe"))
+         (script (format nil "~A list --format json --all-repos --db ~A 2>/dev/null | head -3 >/dev/null; echo ${PIPESTATUS[0]}"
+                          (bw-binary) db)))
+    ;; Seed in-process: one issue with a 200 KiB description is enough to push
+    ;; the JSON well past one pipe buffer, and it costs milliseconds.
+    (let ((store (beadwork::open-store
+                  (namestring (merge-pathnames "beads.db" db)))))
+      (beadwork:create-issue store
+                             :title "Broken pipe filler"
+                             :type :task
+                             :source-repo "beadwork"
+                             :description (make-string 200000 :initial-element #\x))
+      (beadwork::close-store store))
+    (multiple-value-bind (out err code)
+        (uiop:run-program (list "timeout" "-s" "KILL" "20" "bash" "-c" script)
+                          :output :string
+                          :error-output :string
+                          :directory (bw-scratch-root)
+                          :ignore-error-status t)
+      (declare (ignore err))
+      (is = 0 code "the pipeline itself must finish, not time out")
+      (is equal "141" (string-trim '(#\Newline #\Space) out)
+          "bw must die on SIGPIPE instead of spinning"))))
+
 (define-test cli-doctor-classifies-a-closed-dotted-child
   :parent cli-suite
   "bd-r8v end-to-end: the closed child is STALE, not hidden by its open epic."
