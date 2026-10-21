@@ -30,7 +30,8 @@
                  (:file "cli")
                  (:module "commands"
                   :components
-                  ((:file "graph")
+                  ((:file "issue")
+                   (:file "graph")
                    (:file "session")
                    (:file "tree"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
