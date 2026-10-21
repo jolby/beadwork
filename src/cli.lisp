@@ -1361,9 +1361,10 @@ forms append the issue's graph neighborhood and the JSON form includes it."
          (current (get-current-session store)))
     (if current
         (let* ((started (getf current :started-at))
-               (now (local-time:now))
-               (duration (local-time:timestamp-difference started now))
-               (minutes (max 0 (floor duration 60)))
+               ;; %session-duration-seconds computes end - started; doing the
+               ;; subtraction inline here had the arguments reversed, so the
+               ;; human output and the JSON both always said 0 minutes (bd-224).
+               (minutes (floor (%session-duration-seconds current) 60))
                (active-id (getf current :active-issue-id))
                (last-action (getf current :last-action)))
           (unless (eq *format* :json)

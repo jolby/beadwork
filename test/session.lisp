@@ -119,6 +119,21 @@ and filter tests."
                    (list :started-at (local-time:timestamp- now 10 :hour)
                          :ended-at nil)))))
 
+(define-test session-duration-seconds-measures-elapsed-time
+  :parent session-suite
+  "bd-224: session status used (started - now) and clamped it to 0, so it always
+reported '0 min ago'. The shared helper must measure now - started."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (plant-session store "S-elapsed"
+                   (beadwork::format-timestamp
+                    (local-time:timestamp- (local-time:now) 90 :minute)))
+    (let* ((session (beadwork::get-session store "S-elapsed"))
+           (seconds (beadwork::%session-duration-seconds session)))
+      (true (<= 5390 seconds 5410)
+            (format nil "expected ~D seconds for a 90-minute-old session, got ~D"
+                    5400 seconds))
+      (is equal 90 (floor seconds 60)))))
+
 (define-test format-session-duration-renders-units
   :parent session-suite
   (is equal "45s" (beadwork::format-session-duration 45))
