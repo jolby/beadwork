@@ -1,12 +1,22 @@
-* Beadwork (bw) -- Common Lisp Issue Tracker
+* Beadwork (bw) -- Agent Issue Tracker on a br-Compatible Store
 
-Beadwork is a Common Lisp reimplementation of the original [[https://github.com/steveyegge/beads][beads]] issue tracker and its Rust port [[https://github.com/Dicklesworthstone/beads_rust][beads_rust]]. It aims for a subset of feature compatibility with the SQLite/JSONL datastore approach (not the newer Dolt database version).
+Beadwork is a dependency-aware issue tracker for human and agent workflows,
+stored in the same `.beads/` SQLite + JSONL format as
+[[https://github.com/steveyegge/beads][beads]] and
+[[https://github.com/Dicklesworthstone/beads_rust][beads_rust]] (br), so both
+tools can read the same database.
 
-It's designed to be interoperable with br (beads_rust), sharing the same `.beads/` SQLite database format.
+It started as a Common Lisp reimplementation of br and kept the storage layer
+compatible. What it adds is the workflow layer agents actually run on:
+=bw batch= (atomic multi-operation writes with idempotency and dry-run),
+=bw session= (handoff notes and breadcrumbs that survive context restarts),
+=bw doctor= (a status-doc <-> issue sync gate), and source-repo scoping so many
+repositories can share one tracker.
 
 **CLI Name:** =bw=
 
-**Status:** Alpha -- Core commands working, dogfooding in progress
+**Status:** Beta -- dogfooded daily across the cogen-meta repositories (700+
+issues, 50+ sessions).
 
 * Installation
 
@@ -231,28 +241,57 @@ make clean     # Clean build artifacts
 #+begin_example
 beadwork/
 ├── src/
-│   ├── package.lisp   # Package definition
+│   ├── package.lisp    # Package + exports
 │   ├── conditions.lisp # Error conditions
-│   ├── model.lisp     # Data model (issue, dependency, etc.)
-│   ├── schema.lisp    # SQLite schema
-│   ├── storage.lisp   # CRUD operations
-│   ├── sync.lisp      # JSONL import/export
-│   ├── id.lisp        # ID generation
-│   └── cli.lisp       # CLI commands
-├── test/              # Test suite
-├── beadwork.asd      # ASDF system definition
-└── Makefile          # Build targets
+│   ├── model.lisp      # Issue/dependency/session model, relation vocabulary
+│   ├── schema.lisp     # SQLite schema + migrations
+│   ├── storage.lisp    # CRUD, ready/blocked queries, stats, timestamps
+│   ├── id.lisp         # Content-hash ID generation
+│   ├── sync.lisp       # JSONL import/export (br-compatible)
+│   ├── batch.lisp      # Multi-op transactions, idempotency, dry-run
+│   ├── doctor.lisp     # Status-doc <-> issue cross-check
+│   └── cli.lisp        # clingon commands (list/create/update/session/...)
+├── test/               # parachute suite, one file per area
+├── beadwork.asd        # ASDF system definition
+└── Makefile            # shared cl-project.mk targets
 #+end_example
+
+* Durability
+
+`.beads/beads.db` is the working store and is **gitignored**;
+`.beads/issues.jsonl` is the durable, git-tracked record. =bw sync --direction
+export= is the only thing that copies one to the other, and nothing warns you
+when it is stale.
+
+End every session that writes issues with:
+
+#+begin_src sh
+bw sync --direction export      # beads.db -> issues.jsonl
+# commit .beads/issues.jsonl in the metadata repo
+#+end_src
+
+An export that finds a timestamp it cannot parse still writes the file, prints a
+warning for every lost field, and exits 1. =--direction import= upserts from the
+JSONL (=INSERT OR REPLACE=): no deletes, no timestamp guard, so never import a
+file you have not looked at.
 
 * Interoperability with br
 
-Beadwork implements a subset of the original beads/br feature set, focusing on the core issue tracking functionality with SQLite + JSONL storage. It uses the same database schema as br (beads_rust), so you can:
+Beadwork implements the core of the original beads/br feature set and uses the
+same database schema, so you can use =br= to work on an issue and =bw= on
+another, both reading/writing the same =.beads/beads.db=. JSONL export/import is
+compatible.
 
-- Use =br= to work on an issue, then =bw= to work on another
-- Both tools read/write the same =.beads/beads.db=
-- JSONL export/import is compatible
+Known asymmetries:
 
-Note: Beadwork does not implement all features of br -- it's a ground-up CL implementation with a focused scope for human and agentic workflows.
+- A stored timestamp =bw= cannot parse (for example an old 10-digit fractional
+  second) makes =br= refuse the whole command, while =bw= exports that field
+  without a value. =bw sync= reports such rows; fix them, then re-export.
+- =bw= omits tombstones from =issues.jsonl=, so =br doctor= reports a
+  DB-vs-JSONL count difference that is expected, not corruption.
+
+Note: Beadwork does not implement all features of br -- it's a ground-up CL
+implementation with a focused scope for human and agentic workflows.
 
 * License
 
