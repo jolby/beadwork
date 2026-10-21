@@ -63,20 +63,31 @@ bw init -p /path/to/project
 **List issues:**
 
 #+begin_src sh
-bw list                    # All open issues
+bw list                    # Issues for the repo detected from cwd
+bw list --all-repos        # The whole project
 bw list --status closed    # Filter by status
 bw list --priority P1      # Filter by priority
 bw list --type bug        # Filter by type
 bw list -a jboehland     # Filter by assignee
 #+end_src
 
+`list` and `ready` filter to the repo found by walking up from the current
+directory to the nearest `.git/`, and both print that scope in their header. At a
+meta-project root the detected repo is the root itself, not "everything" -- use
+`--all-repos` to see sibling repos. An issue that "does not exist" is usually
+just outside the current filter.
+
 **Create issues:**
 
 #+begin_src sh
-bw create -t "Fix the bug" -d "Description here"
-bw create -t "New feature" -T feature -p P1
-bw create -t "Child task" --parent bd-abc
+bw create -t "Fix the bug" -d "Description here" --repo my-repo
+bw create -t "New feature" -T feature -p P1 --repo my-repo
+bw create -t "Child task" --parent bd-abc   # inherits the parent's repo
 #+end_src
+
+`--repo` names the board the issue belongs to; it is mandatory at top level so
+nothing lands in the unscoped `.` bucket. A child created with `--parent`
+inherits the parent's repo unless `--repo` says otherwise.
 
 **Update issues:**
 

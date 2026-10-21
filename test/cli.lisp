@@ -198,3 +198,47 @@ agents parsing `bw list --format json` break when the result set is empty."
     (is equal "S-test" (gethash "session-id" ht))
     (is = 10 (gethash "duration-minutes" ht))
     (is equal "bd-abc" (gethash "active-issue-id" ht))))
+
+(define-test create-child-inherits-parent-repo
+  :parent cli-suite
+  "A child filed with --parent but no --repo stays on the parent's board."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((parent (beadwork:create-issue store :title "Epic" :type :epic
+                                          :source-repo "render-stack-meta"))
+           (repo (beadwork::resolve-create-repo store
+                                                (beadwork:issue-id parent) nil)))
+      (is equal "render-stack-meta" repo))))
+
+(define-test create-explicit-repo-wins-over-parent
+  :parent cli-suite
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((parent (beadwork:create-issue store :title "Epic" :type :epic
+                                          :source-repo "render-stack-meta"))
+           (repo (beadwork::resolve-create-repo store
+                                                (beadwork:issue-id parent)
+                                                "render-parity")))
+      (is equal "render-parity" repo))))
+
+(define-test create-without-parent-or-repo-has-no-default
+  :parent cli-suite
+  "bd-ogg: a top-level create must not silently land in the \".\" bucket."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (false (beadwork::resolve-create-repo store nil nil))))
+
+(define-test create-rejects-unknown-parent
+  :parent cli-suite
+  "bd-193: a bogus --parent must be a clean issue-not-found, not an FK error."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (handler-case
+        (progn (beadwork::resolve-create-repo store "bd-nope" nil)
+               (false t "expected an issue-not-found condition"))
+      (beadwork:issue-not-found () (true t)))))
+
+(define-test list-scope-line-names-the-filter
+  :parent cli-suite
+  "A scoped list must say so, or it looks like the whole board."
+  (let ((scoped (beadwork::list-scope-line '("render-stack-meta") 231))
+        (all (beadwork::list-scope-line nil 637)))
+    (true (search "render-stack-meta" scoped))
+    (true (search "--all-repos" scoped))
+    (true (search "all repos" all))))

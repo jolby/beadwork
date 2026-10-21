@@ -467,6 +467,16 @@ forms append the issue's graph neighborhood and the JSON form includes it."
     :description "Limit number of results"
     :key :limit)))
 
+(defun list-scope-line (source-repo count)
+  "Human header for `bw list`, naming the repo filter in effect.
+
+Without it a scoped list looks like the whole board, so work tagged in a
+sibling repo appears not to exist (friction report, 2026-10-21)."
+  (if source-repo
+      (format nil "Listing ~D issue(s) for ~{~A~^, ~} (use --all-repos for the whole project)"
+              count source-repo)
+      (format nil "Listing ~D issue(s) across all repos" count)))
+
 (defun list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
@@ -495,6 +505,8 @@ forms append the issue's graph neighborhood and the JSON form includes it."
                                :assignee assignee
                                :limit limit
                                :source-repo source-repo)))
+      (unless (eq *format* :json)
+        (format t "~A~%~%" (list-scope-line source-repo (length issues))))
       (print-issues issues store))))
 
 (defun list/command ()
@@ -588,6 +600,25 @@ forms append the issue's graph neighborhood and the JSON form includes it."
     :description "Issue ID that the new issue blocks on (adds dependency)"
     :key :blocks-on)))
 
+(defun resolve-create-repo (store parent explicit-repo)
+  "Return the source repo for a new issue created under PARENT.
+
+EXPLICIT-REPO always wins. Otherwise a child inherits its parent's repo -- a
+child filed under an epic should stay on the same board unless told otherwise
+(asking the agent to retype the epic's repo is how children get misfiled).
+A top-level issue has no default: `--repo` is mandatory so nothing lands in the
+unscoped \".\" bucket by accident (bd-ogg). Returns NIL when nothing could be
+resolved.
+
+Signals ISSUE-NOT-FOUND when PARENT does not exist -- even when EXPLICIT-REPO
+is given -- instead of letting a nonexistent parent reach the foreign-key
+constraint (bd-193)."
+  (let ((parent-repo (when parent (issue-source-repo (get-issue store parent)))))
+    (cond
+      (explicit-repo (if (listp explicit-repo) (first explicit-repo) explicit-repo))
+      (parent parent-repo)
+      (t nil))))
+
 (defun create/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
@@ -601,13 +632,14 @@ forms append the issue's graph neighborhood and the JSON form includes it."
          (parent (clingon:getopt cmd :parent))
          (blocks-on (clingon:getopt cmd :blocks-on))
          (explicit-repo (clingon:getopt cmd :source-repo))
-         (source-repo (cond
-                        (explicit-repo (if (listp explicit-repo)
-                                          (first explicit-repo)
-                                          explicit-repo))
-                        (t
-                         (format *error-output* "Error: --repo is required. Pass --repo <name> to assign the issue to a repository.~%")
-                         (clingon:exit 1)))))
+         (source-repo (resolve-create-repo store parent explicit-repo)))
+    (unless source-repo
+      (format *error-output* "Error: --repo is required. Pass --repo <name> to assign the issue to a repository.~%")
+      (clingon:exit 1))
+    (when (member source-repo '("." "") :test #'equal)
+      (format *error-output*
+              "warning: parent ~A has no source repo; the child inherits \".\" and will be unscoped~%"
+              parent))
     (let ((issue (create-issue store
                                :title title
                                :description description
