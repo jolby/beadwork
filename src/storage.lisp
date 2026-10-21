@@ -995,5 +995,6 @@ issue if one is set."
              :task (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'task' AND status NOT IN ('closed', 'tombstone')")
              :epic (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'epic' AND status NOT IN ('closed', 'tombstone')")
              :chore (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'chore' AND status NOT IN ('closed', 'tombstone')")
-             :docs (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'docs' AND status NOT IN ('closed', 'tombstone')"))
+             :docs (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'docs' AND status NOT IN ('closed', 'tombstone')")
+             :question (qcount "SELECT COUNT(*) FROM issues WHERE issue_type = 'question' AND status NOT IN ('closed', 'tombstone')"))
        :ready-count (length (ready-issues store))))))

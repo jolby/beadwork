@@ -453,7 +453,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
     :description "Filter by type"
     :long-name "type"
     :key :type
-    :items '("task" "bug" "feature" "epic" "chore" "docs"))
+    :items '("task" "bug" "feature" "epic" "chore" "docs" "question"))
    (clingon:make-option
     :string
     :short-name #\a
@@ -561,7 +561,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
     :long-name "type"
     :description "Issue type"
     :key :type
-    :items '("task" "bug" "feature" "epic" "chore" "docs")
+    :items '("task" "bug" "feature" "epic" "chore" "docs" "question")
     :initial-value "task")
    (clingon:make-option
     :choice
@@ -1206,13 +1206,14 @@ forms append the issue's graph neighborhood and the JSON form includes it."
                   (getf counts-pri :p2)
                   (getf counts-pri :p3)
                   (getf counts-pri :p4))
-          (format t "Type:    bug:~D feature:~D task:~D epic:~D chore:~D docs:~D~%"
+          (format t "Type:    bug:~D feature:~D task:~D epic:~D chore:~D docs:~D question:~D~%"
                   (getf counts-type :bug)
                   (getf counts-type :feature)
                   (getf counts-type :task)
                   (getf counts-type :epic)
                   (getf counts-type :chore)
-                  (getf counts-type :docs))))))
+                  (getf counts-type :docs)
+                  (getf counts-type :question))))))
 
 (defun stats/command ()
   (clingon:make-command

@@ -264,3 +264,13 @@ surfaced as a raw UNIQUE-constraint error."
                (false (equal first-id (getf second :id)))
                (true (>= calls 1))))
         (setf (symbol-function 'beadwork:generate-id) orig)))))
+
+(define-test issue-stats-counts-question-type
+  :parent beadwork-suite
+  "bd-zx4: question is a parseable type; stats must not silently drop it."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (beadwork:create-issue store :title "A question" :type :question
+                           :source-repo "cogen-meta")
+    (let ((counts (getf (beadwork::issue-stats store) :counts-by-type)))
+      (is = 1 (getf counts :question)
+          "a :question issue must be counted, not dropped from the breakdown"))))
