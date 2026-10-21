@@ -297,3 +297,23 @@
              (is = 1 (length (getf result :findings)))
              (is eq :missing (getf (first (getf result :findings)) :status)))
         (beadwork::close-store store)))))
+
+(define-test doctor-unscoped-finds-dot-bucket
+  :parent doctor-suite
+  "bd-ywb: issues with source_repo '.', '' or NULL are unscoped."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (beadwork:create-issue store :title "Scoped" :type :task
+                           :source-repo "cogen-meta")
+    (let ((dot (beadwork:create-issue store :title "Dot" :type :task
+                                      :source-repo "."))
+          (blank (beadwork:create-issue store :title "Blank" :type :task
+                                        :source-repo ""))
+          (closed (beadwork:create-issue store :title "Closed dot" :type :task
+                                         :source-repo ".")))
+      (beadwork:update-issue store (beadwork:issue-id closed) :status :closed)
+      (let ((ids (mapcar #'beadwork:issue-id
+                         (beadwork::find-unscoped-issues store))))
+        (is = 2 (length ids))
+        (true (member (beadwork:issue-id dot) ids :test #'equal))
+        (true (member (beadwork:issue-id blank) ids :test #'equal))
+        (false (member (beadwork:issue-id closed) ids :test #'equal))))))

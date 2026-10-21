@@ -11,14 +11,19 @@
 ;;; ---------------------------------------------------------------------------
 
 (defun run-batch (store json-string)
-  "Run batch processing on STORE and return parsed JSON result."
-  (let ((result-json (beadwork::process-batch store json-string)))
+  "Run batch processing on STORE and return parsed JSON result.
+
+Supplies a source-repo so tests that are not about repo attribution do not
+also trip the unscoped-create warning (bd-ywb)."
+  (let ((result-json (beadwork::process-batch store json-string
+                                              :source-repo "test-repo")))
     (com.inuoe.jzon:parse result-json)))
 
 (defun run-batch-with-key (store key json-string)
   "Run batch with idempotency key."
   (let ((result-json (beadwork::process-batch store json-string
-                                               :idempotency-key key)))
+                                              :idempotency-key key
+                                              :source-repo "test-repo")))
     (com.inuoe.jzon:parse result-json)))
 
 (defun batch-result-ok-p (result)
@@ -617,3 +622,16 @@ stored (previously it became a dangling edge and broke ready/list)."
            (result (run-batch store json)))
       (false (batch-result-ok-p result))
       (is equal 0 (length (beadwork:list-dependencies store aid))))))
+
+(define-test batch-warns-when-create-falls-back-to-dot-repo
+  :parent batch-suite
+  "bd-ywb: a create op with no repo and no detectable source repo is unscoped;
+the batch must say so."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"a\",\"title\":\"No repo\",\"type\":\"task\"}]}")
+           ;; no :source-repo -- models running outside a recognised repo
+           (parsed (com.inuoe.jzon:parse
+                    (beadwork::process-batch store json)))
+           (warnings (gethash "warnings" parsed)))
+      (true (batch-result-ok-p parsed))
+      (true (find-if (lambda (w) (search "no source repo" w)) warnings)))))

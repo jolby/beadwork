@@ -296,3 +296,60 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
        (setf (gethash "info" ht) (or (getf result :info) 'null))
        (format t "~A" (jzon:stringify ht :pretty t))
        (if healthy 0 1)))))
+
+;;; ============================================================================
+;;; Unscoped issues (bd-ywb)
+;;; ============================================================================
+
+(defun find-unscoped-issues (store)
+  "Return open issues whose source_repo is missing, empty, or a bare dot.
+
+These are invisible to repo-scoped `bw ready` / `bw list`, so they silently
+fall out of per-repo reporting (bd-ywb)."
+  (mapcar #'row-to-issue
+          (sqlite:execute-to-list
+           (store-db store)
+           (format nil "SELECT ~A FROM issues
+                        WHERE (source_repo IS NULL OR source_repo IN ('', '.'))
+                          AND status NOT IN ('closed', 'tombstone')
+                        ORDER BY priority ASC, created_at DESC"
+                   *issue-select-columns*))))
+
+(defun run-doctor-unscoped (store)
+  "Return a plist describing the unscoped bucket: :issues, :count, :checked."
+  (let ((issues (find-unscoped-issues store)))
+    (list :issues issues :count (length issues) :checked t)))
+
+(defun report-doctor-unscoped (result format)
+  "Print the unscoped finding. Returns 0 when empty, 1 when not."
+  (let ((issues (getf result :issues))
+        (count (getf result :count)))
+    (ecase format
+      (:human
+       (if (zerop count)
+           (format t "No unscoped issues.~%")
+           (progn
+             (format t "~D unscoped issue(s) -- source_repo is '.', empty, or NULL:~%~%" count)
+             (dolist (issue issues)
+               (format t "  ~A  P~D  ~A  ~A~%"
+                       (issue-id issue) (issue-priority issue)
+                       (string-upcase (symbol-name (issue-status issue)))
+                       (issue-title issue))))))
+      (:json
+       (let ((ht (make-hash-table :test #'equal)))
+         (setf (gethash "checked" ht) t)
+         (setf (gethash "count" ht) count)
+         (setf (gethash "issues" ht)
+               (coerce (mapcar (lambda (i)
+                                 (let ((iht (make-hash-table :test #'equal)))
+                                   (setf (gethash "id" iht) (issue-id i))
+                                   (setf (gethash "title" iht) (issue-title i))
+                                   (setf (gethash "priority" iht) (issue-priority i))
+                                   (setf (gethash "status" iht)
+                                         (string-downcase
+                                          (symbol-name (issue-status i))))
+                                   iht))
+                               issues)
+                       'vector))
+         (format t "~A" (jzon:stringify ht :pretty t)))))
+    (if (zerop count) 0 1)))

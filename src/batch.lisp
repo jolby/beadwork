@@ -115,6 +115,10 @@ FIELD names the referring location in error messages."
 ;;; Operation handlers
 ;;; ============================================================================
 
+(defvar *batch-repo-fallbacks* nil
+  "Issue ids created without a resolvable source repo during this batch.
+Bound by process-batch and surfaced as warnings (bd-ywb).")
+
 (defun %batch-create (store op result-array &key source-repo)
   "Handle a single create operation. Returns the created issue's beadwork ID.
 RESULT-ARRAY is the vector of result objects to append to.
@@ -139,6 +143,10 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
                    :assignee assignee
                    :source-repo repo)))
       (let ((id (issue-id issue)))
+        ;; An unreconciled repo becomes "." and drops out of repo-scoped
+        ;; queries; collect it so the batch can warn (bd-ywb).
+        (when (member repo '(nil "." "") :test #'equal)
+          (push id *batch-repo-fallbacks*))
         ;; Record in ref map if ref provided
         (when ref
           (setf (gethash ref *ref-map*) id))
@@ -404,7 +412,8 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
       (handler-case
           (let* ((db (store-db store))
                (result-array (make-array 0 :fill-pointer t :adjustable t))
-               (*ref-map* (make-hash-table :test #'equal)))
+               (*ref-map* (make-hash-table :test #'equal))
+               (*batch-repo-fallbacks* nil))
           (sqlite:execute-non-query db "BEGIN IMMEDIATE")
           (unwind-protect
                (progn
@@ -439,7 +448,11 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
                  ;; batch back, never report failure after a committed write
                  ;; (bd-3ze: the link-refs walk used to reject string-form
                  ;; endpoints after COMMIT, so ok:false but deps persisted).
-                 (let ((warnings (%batch-orphan-warnings ops-vec)))
+                 (let ((warnings
+                         (append (%batch-orphan-warnings ops-vec)
+                                 (mapcar (lambda (id)
+                                           (format nil "issue ~A has no source repo (fell back to \".\"); pass a \"repo\" field or run from a repo directory" id))
+                                         (reverse *batch-repo-fallbacks*)))))
                    (if dry-run
                        (sqlite:execute-non-query db "ROLLBACK")
                        (sqlite:execute-non-query db "COMMIT"))

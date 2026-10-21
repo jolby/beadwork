@@ -1769,6 +1769,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
              (stale (getf summary :stale 0))
              (missing (getf summary :missing 0))
              (orphan (getf summary :orphan 0))
+             (unscoped (getf (run-doctor-unscoped store) :count))
              (healthy (and checked
                            (zerop stale) (zerop missing) (zerop orphan))))
         (if (eq *format* :json)
@@ -1778,12 +1779,13 @@ forms append the issue's graph neighborhood and the JSON form includes it."
               (setf (gethash "stale" ht) stale)
               (setf (gethash "missing" ht) missing)
               (setf (gethash "orphan" ht) orphan)
+              (setf (gethash "unscoped" ht) unscoped)
               (setf (gethash "healthy" ht) (if checked (and healthy t) 'null))
               (format t "~A" (jzon:stringify ht)))
             (if checked
-                (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN -- exit ~D~%"
-                        ok stale missing orphan (if healthy 0 1))
-                (format t "NOT CHECKED -- ~A~%" (getf result :info))))
+                (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN, ~D unscoped -- exit ~D~%"
+                        ok stale missing orphan unscoped (if healthy 0 1))
+                (format t "NOT CHECKED (~D unscoped) -- ~A~%" unscoped (getf result :info))))
         ;; Not checked exits 0 by design (a doc with no next steps is legal);
         ;; the output line is what makes the state visible (bd-fs9).
         (clingon:exit (if checked (if healthy 0 1) 0))))))
@@ -1794,6 +1796,21 @@ forms append the issue's graph neighborhood and the JSON form includes it."
    :description "One-line doctor summary for cold-start integration"
    :options (append (doctor/options) (global-options))
    :handler #'doctor-health/handler))
+
+(defun doctor-unscoped/handler (cmd)
+  (let* ((format-val (clingon:getopt cmd :format))
+         (*format* (parse-format format-val))
+         (store (ensure-store cmd)))
+    (clingon:exit (report-doctor-unscoped
+                   (run-doctor-unscoped store)
+                   (if (eq *format* :json) :json :human)))))
+
+(defun doctor-unscoped/command ()
+  (clingon:make-command
+   :name "unscoped"
+   :description "List open issues with no source repo (the \".\" bucket)"
+   :options (append (doctor/options) (global-options))
+   :handler #'doctor-unscoped/handler))
 
 (defun doctor/handler (cmd)
   "Flat 'bw doctor' -- runs status-docs check by default."
@@ -1806,7 +1823,8 @@ forms append the issue's graph neighborhood and the JSON form includes it."
    :options (append (doctor/options) (global-options))
    :handler #'doctor/handler
    :sub-commands (list (doctor-status-docs/command)
-                       (doctor-health/command))))
+                       (doctor-health/command)
+                       (doctor-unscoped/command))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Command: batch
