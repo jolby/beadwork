@@ -9,11 +9,31 @@ Examples: \"bd-0lg\" → \"bd-0lg\", \"(bd-szn.5)\" → \"bd-szn.5\", \"—\" �
   (when text
     (let ((trimmed (string-trim " " text)))
       (or (ppcre:register-groups-bind (id)
-              ("^(bd-[a-z0-9]+)$" trimmed)
+              ("^(bd-[a-z0-9]+(?:\\.[a-z0-9]+)*)$" trimmed)
             id)
           (ppcre:register-groups-bind (id)
-              (".*?(bd-[a-z0-9]+)" trimmed)
+              (".*?(bd-[a-z0-9]+(?:\\.[a-z0-9]+)*)" trimmed)
             id)))))
+
+(defun resolve-bw-id (store bw-id)
+  "Look up BW-ID in STORE, falling back to its nearest existing ancestor.
+
+Ids are dotted hierarchies (bd-sa3.11.5).  The exact id wins; only when it is
+absent does the lookup drop one trailing segment at a time, so a stale child
+can no longer hide behind an open epic (bd-r8v).
+
+Returns (values ISSUE MATCHED-ID FALLBACK-P).  When neither BW-ID nor any
+ancestor exists, ISSUE is NIL, MATCHED-ID is BW-ID (what was looked for), and
+FALLBACK-P is NIL."
+  (loop with candidate = bw-id
+        for issue = (handler-case (get-issue store candidate)
+                      (issue-not-found () nil))
+        when issue
+          do (return (values issue candidate (not (string= candidate bw-id))))
+        do (let ((dot (position #\. candidate :from-end t)))
+             (unless dot
+               (return (values nil bw-id nil)))
+             (setf candidate (subseq candidate 0 dot)))))
 
 (defun orphan-id (doc-namestring task)
   "Generate a stable pseudo-ID for an orphan task.
@@ -26,29 +46,30 @@ Uses a hash of the document path + task text, truncated to 7 hex chars."
 ROW is a list (priority task id-text).
 DOC-PATH is the status document pathname (for generating orphan IDs).
 Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
-:id (string or nil), :task (string), :source (string), and
-:issue-status (keyword or nil)."
+:id (the id that was actually classified), :requested-id (the id as written in
+the document -- it differs from :id only when an ancestor was used),
+:task (string), :source (string), and :issue-status (keyword or nil)."
   (destructuring-bind (priority task id-text) row
     (declare (ignore priority))
     (let ((bw-id (extract-bw-id id-text)))
       (if bw-id
-          ;; Has a valid bw ID — check existence and status
-          (handler-case
-              (let ((issue (get-issue store bw-id)))
-                (if (member (issue-status issue) '(:closed :tombstone))
-                    (list :status :stale
-                          :id bw-id
-                          :task task
-                          :issue-status (issue-status issue))
-                    (list :status :ok
-                          :id bw-id
-                          :task task
-                          :issue-status (issue-status issue))))
-            (issue-not-found ()
-              (list :status :missing
-                    :id bw-id
-                    :task task
-                    :issue-status nil)))
+          (multiple-value-bind (issue matched-id fallback-p)
+              (resolve-bw-id store bw-id)
+            (if (null issue)
+                (list :status :missing
+                      :id bw-id
+                      :requested-id bw-id
+                      :task task
+                      :issue-status nil)
+                (list :status (if (member (issue-status issue)
+                                          '(:closed :tombstone))
+                                  :stale
+                                  :ok)
+                      :id matched-id
+                      :requested-id bw-id
+                      :ancestor-fallback-p fallback-p
+                      :task task
+                      :issue-status (issue-status issue))))
           ;; No valid bw ID — orphan: generate a stable pseudo-ID
           (let* ((doc-str (if doc-path (file-namestring doc-path) "unknown"))
                  (oid (orphan-id doc-str task)))
@@ -208,23 +229,33 @@ it must be recognizable as *not checked* (bd-fs9)."
 
 (defun format-finding-line (finding)
   "Format a single finding as a human-readable line.
-For orphans, includes the source document name."
+For orphans, includes the source document name.  When an unknown dotted id was
+classified against an ancestor, the line names both ids (bd-r8v)."
   (let* ((status (getf finding :status))
          (id (getf finding :id))
+         (requested (getf finding :requested-id))
          (task (getf finding :task))
          (source (getf finding :source))
          (marker (ecase status
                    (:ok "OK    ")
                    (:stale "STALE ")
                    (:missing "MISS  ")
-                   (:orphan "ORPHAN"))))
+                   (:orphan "ORPHAN")))
+         (ancestor-note
+           (cond
+             ((and requested id (not (string= requested id)))
+              (format nil "  [~A not found; matched ~A]" requested id))
+             ((and (eq status :missing) requested (find #\. requested))
+              (format nil "  [no such issue: ~A or any ancestor]" requested))
+             (t ""))))
     (if (and (eq status :orphan) source)
         (format nil "~A ~A  ~A  [~A]"
                 marker id (string-trim " " task) source)
-        (format nil "~A ~A  ~A"
+        (format nil "~A ~A  ~A~A"
                 marker
                 (if id (format nil "~A  " id) "—        ")
-                (string-trim " " task)))))
+                (string-trim " " task)
+                ancestor-note))))
 
 (defun report-doctor-findings (result format)
   "Print the doctor findings in FORMAT (:human or :json).
@@ -280,6 +311,8 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
              (coerce (mapcar (lambda (f)
                                (let ((fht (make-hash-table :test #'equal)))
                                  (setf (gethash "id" fht) (or (getf f :id) 'null))
+                                 (setf (gethash "requested-id" fht)
+                                       (or (getf f :requested-id) 'null))
                                  (setf (gethash "task" fht) (or (getf f :task) 'null))
                                  (setf (gethash "status" fht) (symbol-name (getf f :status)))
                                  (setf (gethash "source" fht) (or (getf f :source) 'null))

@@ -50,11 +50,11 @@
     ;; Row 1: has embedded bw ID
     (is equal "—" (first (first rows)))
     (is equal "Signal handlers: SIGWINCH (bd-szn.5)" (second (first rows)))
-    (is equal "bd-szn" (third (first rows)))
+    (is equal "bd-szn.5" (third (first rows)))
     ;; Row 2: has embedded bw ID with parens
     (is equal "—" (first (second rows)))
     (is equal "Dogfood the TUI (bd-szn.6)" (second (second rows)))
-    (is equal "bd-szn" (third (second rows)))
+    (is equal "bd-szn.6" (third (second rows)))
     ;; Row 3: no ID
     (is equal "—" (first (third rows)))
     (is equal "Editor cursor polish" (second (third rows)))
@@ -132,8 +132,19 @@
   (is equal nil (beadwork::extract-bw-id "N/A"))
   ;; Embedded IDs in text now extracted
   (is equal "bd-abc" (beadwork::extract-bw-id "see bd-abc for details"))
-  (is equal "bd-szn" (beadwork::extract-bw-id "Signal handlers: SIGWINCH (bd-szn.5)"))
+  (is equal "bd-szn.5" (beadwork::extract-bw-id "Signal handlers: SIGWINCH (bd-szn.5)"))
   (is equal "bd-ayh" (beadwork::extract-bw-id "Fix the bd-ayh issue")))
+
+(define-test extracts-dotted-bw-ids
+  :parent doctor-suite
+  "bd-r8v: a dotted id is extracted whole, not cut at the first dot."
+  (is equal "bd-sa3.11.5" (beadwork::extract-bw-id "bd-sa3.11.5"))
+  (is equal "bd-sa3.11.5" (beadwork::extract-bw-id "Landed (bd-sa3.11.5)"))
+  (is equal "bd-1kj7.20.7" (beadwork::extract-bw-id "1. Textual MVP (bd-1kj7.20.7)"))
+  (is equal "bd-sa3.11" (beadwork::extract-bw-id "then (bd-sa3.11); and more"))
+  ;; Trailing sentence punctuation is not part of the id.
+  (is equal "bd-sa3" (beadwork::extract-bw-id "see bd-sa3."))
+  (is equal "bd-sa3" (beadwork::extract-bw-id "bd-sa3, then bd-abc")))
 
 (define-test finds-latest-status-doc
   :parent doctor-suite
@@ -211,7 +222,7 @@
                   ""))
          (rows (beadwork::parse-whats-next-table lines)))
     (is = 2 (length rows))
-    (is equal "bd-sa3" (third (first rows)))
+    (is equal "bd-sa3.2" (third (first rows)))
     (is equal "bd-qsj" (third (second rows)))
     (is equal "Start bd-sa3.2 (P1): split cogen-ai into two systems."
               (second (first rows)))))
@@ -297,6 +308,83 @@
              (is = 1 (length (getf result :findings)))
              (is eq :missing (getf (first (getf result :findings)) :status)))
         (beadwork::close-store store)))))
+
+;;; ============================================================================
+;;; Dotted ids: exact match, ancestor fallback, missing (bd-r8v)
+;;; ============================================================================
+
+(define-test doctor-classifies-exact-dotted-child
+  :parent doctor-suite
+  "bd-r8v: a closed child is STALE even though its open epic exists."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((epic (beadwork:create-issue store :title "Epic" :type :epic))
+           (epic-id (beadwork:issue-id epic))
+           (child (beadwork:create-issue store :title "Child" :type :task
+                                         :parent epic-id))
+           (child-id (beadwork:issue-id child)))
+      (beadwork:close-issue store child-id :reason "done")
+      ;; The epic is still open, so an ancestor-only lookup would say OK.
+      (let ((result (beadwork::classify-row
+                     (list "P1" "Continue the tail plan" child-id) store)))
+        (is eq :stale (getf result :status))
+        (is equal child-id (getf result :id))
+        (is equal child-id (getf result :requested-id)))
+      ;; A still-open child of the same epic classifies OK.
+      (let* ((other (beadwork:create-issue store :title "Other" :type :task
+                                           :parent epic-id))
+             (result (beadwork::classify-row
+                      (list "P1" "Keep going" (beadwork:issue-id other)) store)))
+        (is eq :ok (getf result :status))
+        (is equal (beadwork:issue-id other) (getf result :id))))))
+
+(define-test doctor-falls-back-to-nearest-ancestor
+  :parent doctor-suite
+  "bd-r8v: an unknown dotted id classifies against the nearest existing ancestor."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((epic (beadwork:create-issue store :title "Epic" :type :epic))
+           (epic-id (beadwork:issue-id epic))
+           (child (beadwork:create-issue store :title "Child" :type :task
+                                         :parent epic-id))
+           (child-id (beadwork:issue-id child)))
+      (dolist (requested (list (format nil "~A.9" child-id)
+                               (format nil "~A.9.2" child-id)))
+        (let ((result (beadwork::classify-row
+                       (list "P1" "Ghost child" requested) store)))
+          (is eq :ok (getf result :status))
+          (is equal child-id (getf result :id))
+          (is equal requested (getf result :requested-id))
+          ;; The human line must say which ancestor was used.
+          (let ((line (beadwork::format-finding-line result)))
+            (true (search requested line))
+            (true (search child-id line))))))))
+
+(define-test doctor-missing-dotted-id-is-missing
+  :parent doctor-suite
+  "bd-r8v: a dotted id with no existing ancestor is MISSING, not OK."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let ((result (beadwork::classify-row
+                   (list "P1" "Nothing here" "bd-zzz.9.9") store)))
+      (is eq :missing (getf result :status))
+      (is equal "bd-zzz.9.9" (getf result :id))
+      (is equal "bd-zzz.9.9" (getf result :requested-id)))))
+
+(define-test doctor-json-reports-requested-id
+  :parent doctor-suite
+  "bd-r8v: JSON carries the requested id and the one actually classified."
+  (let* ((findings (list (list :status :ok :id "bd-abc.1"
+                               :requested-id "bd-abc.1.9"
+                               :task "Ghost child" :issue-status :open)))
+         (result (list :status-doc #P"doc.md"
+                       :checked t
+                       :findings findings
+                       :summary (list :ok 1 :stale 0 :missing 0 :orphan 0)))
+         (output (with-output-to-string (s)
+                   (let ((*standard-output* s))
+                     (beadwork::report-doctor-findings result :json))))
+         (parsed (com.inuoe.jzon:parse output))
+         (finding (aref (gethash "findings" parsed) 0)))
+    (is equal "bd-abc.1" (gethash "id" finding))
+    (is equal "bd-abc.1.9" (gethash "requested-id" finding))))
 
 (define-test doctor-unscoped-finds-dot-bucket
   :parent doctor-suite
