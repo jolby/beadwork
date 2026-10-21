@@ -243,9 +243,19 @@ Beadwork looks for a =.beads/= directory starting from the current directory and
 #+begin_src sh
 cd repos/beadwork
 make build      # Builds bin/bw
-make test      # Run tests
-make clean     # Clean build artifacts
+make test       # Builds bin/bw, then runs the suite (~25s cold)
+make clean      # Clean build artifacts
 #+end_src
+
+=make test= builds first on purpose. The CLI suite (test/cli.lisp) spawns
+=bin/bw= as a subprocess for every top-level command and asserts stdout,
+stderr, exit code, and the resulting database state -- so the binary *is* part
+of the test surface, and grading a stale one would be a silent failure. Each
+case runs against its own =--db= directory under =/tmp=.
+
+A focused run (=make test-eval EVAL="..."=) skips the rebuild; if it reaches a
+CLI test whose =bin/bw= is older than =src/=, the harness errors with
+"bin/bw is older than src/" rather than testing old code.
 
 **Project structure:**
 
@@ -263,6 +273,7 @@ beadwork/
 │   ├── doctor.lisp     # Status-doc <-> issue cross-check
 │   └── cli.lisp        # clingon commands (list/create/update/session/...)
 ├── test/               # parachute suite, one file per area
+│   └── cli.lisp        # end-to-end: spawns bin/bw, one test per command
 ├── beadwork.asd        # ASDF system definition
 └── Makefile            # shared cl-project.mk targets
 #+end_example
