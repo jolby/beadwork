@@ -202,12 +202,38 @@ Column order matches the SELECT in export-jsonl."
              FROM dependencies WHERE issue_id = ? ORDER BY depends_on_id"
             issue-id)))
 
+;;;; ----------------------------------------------------------------------------
+;;; Issue → JSON hash-table (continued)
+;;; ----------------------------------------------------------------------------
+
+(defun export-timestamp-problems (store)
+  "Return (id column raw-value) for every timestamp that would export as null.
+
+export-jsonl writes no value whenever parse-timestamp cannot read a stored
+string, which silently drops the field from the git-tracked JSONL (bd-1j9).
+Detecting it here lets the export report the loss instead."
+  (let ((problems '()))
+    (dolist (row (sqlite:execute-to-list
+                  (store-db store)
+                  "SELECT id, created_at, updated_at, closed_at FROM issues"))
+      (destructuring-bind (id created updated closed) row
+        (loop for column in '("created_at" "updated_at" "closed_at")
+              for raw in (list created updated closed)
+              when (and raw (plusp (length raw)) (null (parse-timestamp raw)))
+                do (push (list id column raw) problems))))
+    (nreverse problems)))
+
 (defun export-jsonl (store path)
   "Export all non-tombstone issues from STORE to a JSONL file at PATH.
 Each line is a JSON object with embedded dependencies. Issues are sorted by
-created_at. Clears dirty flags after successful export."
+created_at. Clears dirty flags after successful export.
+
+Returns (values PATH PROBLEMS); PROBLEMS lists (id column raw-value) for
+timestamps that could not be parsed and were therefore written without a
+value (bd-1j9)."
   (let ((db (store-db store))
-        (path (pathname path)))
+        (path (pathname path))
+        (problems (export-timestamp-problems store)))
     (ensure-directories-exist path)
     (let ((rows (sqlite:execute-to-list db
                   "SELECT id, content_hash, title, description, design,
@@ -233,7 +259,7 @@ created_at. Clears dirty flags after successful export."
             (terpri out))))
       ;; Clear dirty flags
       (sqlite:execute-non-query db "DELETE FROM dirty_issues")
-      path)))
+      (values path problems))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Import JSONL

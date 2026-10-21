@@ -76,3 +76,30 @@ on store open, matching the issues-table handling (bd-e84)."
                    "dependencies.created_at must be normalized to RFC3339 UTC"))))
       (when (probe-file db-path)
         (delete-file db-path)))))
+
+(define-test export-reports-unparseable-timestamps
+  :parent beadwork-suite
+  "bd-1j9: a timestamp bw cannot parse is exported without a value; say so
+instead of silently dropping it."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Bad stamp" :type :task
+                                         :source-repo "cogen-meta"))
+           (id (beadwork:issue-id issue))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (sqlite:execute-non-query
+       (beadwork::store-db store)
+       "UPDATE issues SET closed_at = ?, status = 'closed' WHERE id = ?"
+       "2026-06-06T12:29:19.1247400700" id)
+      (multiple-value-bind (exported problems)
+          (beadwork::export-jsonl store path)
+        (declare (ignore exported))
+        (is = 1 (length problems))
+        (is equal id (first (first problems)))
+        (is equal "closed_at" (second (first problems))))
+      (let* ((line (with-open-file (in path) (read-line in)))
+             (ht (com.inuoe.jzon:parse line)))
+        (multiple-value-bind (value present) (gethash "closed_at" ht)
+          ;; issue-to-json-object omits nil timestamps, so the field is either
+          ;; absent or JSON null -- either way the value is gone.
+          (true (or (not present) (eq 'null value))))))))

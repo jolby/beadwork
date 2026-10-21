@@ -1665,8 +1665,20 @@ forms append the issue's graph neighborhood and the JSON form includes it."
     (cond
       ((string-equal direction "export")
        (let ((path (merge-pathnames "issues.jsonl" beads-dir)))
-         (export-jsonl store (namestring path))
-         (format t "Exported to ~A~%" path)))
+         (multiple-value-bind (exported problems)
+             (export-jsonl store (namestring path))
+           (declare (ignore exported))
+           (dolist (problem problems)
+             (destructuring-bind (id column raw) problem
+               (format *error-output*
+                       "warning: ~A ~A is not a parseable timestamp (~S); exported without a value~%"
+                       id column raw)))
+           (format t "Exported to ~A~%" path)
+           (when problems
+             (format *error-output*
+                     "~D timestamp(s) have no exported value -- fix the rows, then re-export~%"
+                     (length problems))
+             (clingon:exit 1)))))
       ((string-equal direction "import")
        (let ((path (merge-pathnames "issues.jsonl" beads-dir)))
          (import-jsonl store (namestring path))
