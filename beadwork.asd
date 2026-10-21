@@ -33,6 +33,7 @@
                   ((:file "issue")
                    (:file "graph")
                    (:file "session")
+                   (:file "misc")
                    (:file "tree"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
 
