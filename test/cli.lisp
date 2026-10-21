@@ -169,3 +169,32 @@ agents parsing `bw list --format json` break when the result set is empty."
     (is equal "[]"
             (string-trim '(#\Newline #\Space)
                          (get-output-stream-string out)))))
+
+(define-test stats-json-is-an-object
+  :parent cli-suite
+  "bd-7b6: stats JSON must be an object with named numeric fields."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (beadwork:create-issue store :title "One" :type :task
+                           :source-repo "cogen-meta")
+    (let* ((json (com.inuoe.jzon:stringify
+                  (beadwork::stats->json (beadwork::issue-stats store))))
+           (ht (com.inuoe.jzon:parse json)))
+      (true (hash-table-p ht))
+      (is = 1 (gethash "total" ht))
+      (true (hash-table-p (gethash "counts-by-status" ht)))
+      (is = 1 (gethash "open" (gethash "counts-by-status" ht))))))
+
+(define-test session-status-json-is-an-object
+  :parent cli-suite
+  "bd-7b6: session status JSON must be an object with named fields."
+  (let* ((session (list :id "S-test"
+                        :started-at (local-time:timestamp- (local-time:now)
+                                                           10 :minute)
+                        :active-issue-id "bd-abc"
+                        :last-action "did a thing"
+                        :agent-id "worker"))
+         (ht (beadwork::session-status->json session 10)))
+    (true (hash-table-p ht))
+    (is equal "S-test" (gethash "session-id" ht))
+    (is = 10 (gethash "duration-minutes" ht))
+    (is equal "bd-abc" (gethash "active-issue-id" ht))))

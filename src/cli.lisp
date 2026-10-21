@@ -1180,6 +1180,29 @@ forms append the issue's graph neighborhood and the JSON form includes it."
 ;;; Command: stats
 ;;; ---------------------------------------------------------------------------
 
+(defun counts->json (counts)
+  "Convert a keyword plist of counts to a JSON object hash-table."
+  (let ((ht (make-hash-table :test #'equal)))
+    (loop for (key value) on counts by #'cddr
+          do (setf (gethash (string-downcase (symbol-name key)) ht) value))
+    ht))
+
+(defun stats->json (stats)
+  "Convert ISSUE-STATS output to a jzon JSON object (bd-7b6).
+
+A plist stringifies to a JSON *array* in jzon, so consumers doing `jq .total`
+failed; build hash-tables instead."
+  (let ((ht (make-hash-table :test #'equal)))
+    (setf (gethash "total" ht) (getf stats :total))
+    (setf (gethash "ready-count" ht) (getf stats :ready-count))
+    (setf (gethash "counts-by-status" ht)
+          (counts->json (getf stats :counts-by-status)))
+    (setf (gethash "counts-by-priority" ht)
+          (counts->json (getf stats :counts-by-priority)))
+    (setf (gethash "counts-by-type" ht)
+          (counts->json (getf stats :counts-by-type)))
+    ht))
+
 (defun stats/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
@@ -1190,7 +1213,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
          (counts-pri (getf stats :counts-by-priority))
          (counts-type (getf stats :counts-by-type)))
     (if (eq *format* :json)
-        (format t "~A" (jzon:stringify stats :pretty t))
+        (format t "~A" (jzon:stringify (stats->json stats) :pretty t))
         (progn
           (format t "Issues: ~D total, ~D ready~%"
                   (getf stats :total) (getf stats :ready-count))
@@ -1354,6 +1377,20 @@ forms append the issue's graph neighborhood and the JSON form includes it."
    :handler #'session-action/handler
    :usage "<text>"))
 
+(defun session-status->json (session minutes)
+  "Convert SESSION plus its elapsed MINUTES to a JSON object hash-table.
+
+An alist stringifies to a JSON array in jzon; consumers expect an object
+(bd-7b6)."
+  (let ((ht (make-hash-table :test #'equal)))
+    (setf (gethash "session-id" ht) (getf session :id))
+    (setf (gethash "started-at" ht) (format-timestamp (getf session :started-at)))
+    (setf (gethash "duration-minutes" ht) minutes)
+    (setf (gethash "active-issue-id" ht) (or (getf session :active-issue-id) 'null))
+    (setf (gethash "last-action" ht) (or (getf session :last-action) ""))
+    (setf (gethash "agent-id" ht) (or (getf session :agent-id) ""))
+    ht))
+
 (defun session-status/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))
@@ -1380,14 +1417,8 @@ forms append the issue's graph neighborhood and the JSON form includes it."
               (format t "Last action: ~A~%" last-action)))
           (when (eq *format* :json)
             (format t "~A"
-                    (jzon:stringify
-                     (list (list "session-id" (getf current :id))
-                           (list "started-at" (format-timestamp started))
-                           (list "duration-minutes" minutes)
-                           (list "active-issue-id" active-id)
-                           (list "last-action" (or last-action ""))
-                           (list "agent-id" (getf current :agent-id)))
-                     :pretty t))))
+                    (jzon:stringify (session-status->json current minutes)
+                                    :pretty t))))
         (unless (eq *format* :json)
           (format t "No active session. Use 'bw session start' to begin.~%")))))
 
