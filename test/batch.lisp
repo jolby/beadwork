@@ -366,6 +366,80 @@ CHECK constraint (bd-lu5)."
         (is equal 1 (length (beadwork:list-comments store epic-id)))))))
 
 ;;; ============================================================================
+;;; Issue references in any shape (bd-3ze)
+;;; ============================================================================
+
+(define-test batch-update-and-comment-in-one-payload
+  :parent batch-suite
+  "bd-3ze: the reported payload -- update and comment on the same issue in a
+single batch, both naming it with a bare id string."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store :title "Before" :type :task))
+           (id (beadwork:issue-id existing))
+           (json (format nil
+                         "{\"operations\":[{\"op\":\"update\",\"id\":\"~A\",\"title\":\"After\",\"priority\":\"P1\"},{\"op\":\"comment\",\"id\":\"~A\",\"text\":\"mixed\"}]}"
+                         id id))
+           (result (run-batch store json))
+           (updated (beadwork:get-issue store id)))
+      (true (batch-result-ok-p result))
+      (is equal "After" (beadwork:issue-title updated))
+      (is equal 1 (beadwork:issue-priority updated))
+      (is equal 1 (length (beadwork:list-comments store id))))))
+
+(define-test batch-update-accepts-ref-object-id
+  :parent batch-suite
+  "bd-3ze: update's id also accepts the {ref}/{id} object form."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store :title "Before" :type :task))
+           (id (beadwork:issue-id existing))
+           (json (format nil
+                         "{\"operations\":[{\"op\":\"update\",\"id\":{\"id\":\"~A\"},\"title\":\"After\"}]}"
+                         id))
+           (result (run-batch store json)))
+      (true (batch-result-ok-p result))
+      (is equal "After" (beadwork:issue-title (beadwork:get-issue store id))))))
+
+(define-test batch-comment-accepts-ref-object-id-for-created-issue
+  :parent batch-suite
+  "bd-3ze: a comment can address a just-created issue by ref or by bare string."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"a\",\"title\":\"Target\",\"type\":\"task\"},{\"op\":\"comment\",\"id\":{\"ref\":\"a\"},\"text\":\"by ref\"}]}")
+           (result (run-batch store json))
+           (id (batch-first-id result)))
+      (true (batch-result-ok-p result))
+      (is equal 1 (length (beadwork:list-comments store id))))))
+
+(define-test batch-link-accepts-bare-string-endpoints
+  :parent batch-suite
+  "bd-3ze: link source/target accept bare id strings, matching update."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((child (beadwork:create-issue store :title "Child" :type :task))
+           (parent (beadwork:create-issue store :title "Parent" :type :epic))
+           (child-id (beadwork:issue-id child))
+           (parent-id (beadwork:issue-id parent))
+           (json (format nil
+                         "{\"operations\":[{\"op\":\"link\",\"source\":\"~A\",\"target\":\"~A\",\"relation\":\"parent-child\"}]}"
+                         child-id parent-id))
+           (result (run-batch store json))
+           (deps (beadwork:list-dependencies store child-id)))
+      (true (batch-result-ok-p result))
+      (is equal 1 (length deps))
+      (is equal parent-id (beadwork:dependency-depends-on-id (first deps))))))
+
+(define-test batch-error-names-failing-operation
+  :parent batch-suite
+  "bd-3ze: a rejected op reports its 1-based position and type, so a multi-op
+payload can be debugged without bisecting the operations array."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((json "{\"operations\":[{\"op\":\"create\",\"ref\":\"a\",\"title\":\"Fine\",\"type\":\"task\"},{\"op\":\"update\",\"id\":123,\"title\":\"Bad id\"}]}")
+           (result (run-batch store json))
+           (msg (gethash "error" result)))
+      (false (batch-result-ok-p result))
+      (true (search "operation 2 (update)" msg))
+      ;; The whole batch rolled back, so the first create must be gone too.
+      (is equal 0 (length (beadwork:list-issues store :source-repo nil))))))
+
+;;; ============================================================================
 ;;; Rollback on error (atomicity)
 ;;; ============================================================================
 

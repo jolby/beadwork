@@ -27,6 +27,7 @@
   (let ((val (gethash key ht)))
     (when val
       (ecase type
+        (:any val)
         (:string (unless (stringp val)
                    (error 'beadwork-error :message
                           (format nil "Field '~A' must be a string, got: ~S" key val)))
@@ -47,6 +48,7 @@
     (when (or (null val) (eq val :null))
       (error 'beadwork-error :message (format nil "Missing required field: '~A'" key)))
     (ecase type
+      (:any val)
       (:string (unless (stringp val)
                  (error 'beadwork-error :message
                         (format nil "Field '~A' must be a string, got: ~S" key val)))
@@ -76,9 +78,11 @@
   "Dynamic variable: hash-table mapping batch ref labels -> beadwork IDs.
 Bound during batch processing for use in link resolution pass.")
 
-(defun %resolve-ref (target)
+(defun %resolve-ref (target &key (field "link"))
   "Resolve a TARGET reference which is either {\"ref\": \"...\"} or {\"id\": \"...\"}.
-Returns the beadwork issue ID string. Signals error on unknown refs."
+Returns the beadwork issue ID string. Signals error on unknown refs.
+FIELD names the referring location (for example \"link source\") in error
+messages, so a multi-op payload can say which reference was bad."
   (let ((ref (%batch-get-string target "ref"))
         (id (%batch-get-string target "id")))
     (cond
@@ -86,11 +90,26 @@ Returns the beadwork issue ID string. Signals error on unknown refs."
        (let ((resolved (gethash ref *ref-map*)))
          (unless resolved
            (error 'beadwork-error :message
-                  (format nil "Unknown ref '~A' in link -- create the issue with this ref before linking to it" ref)))
+                  (format nil "Unknown ref '~A' in ~A -- create the issue with this ref earlier in the batch" ref field)))
          resolved))
       (id id)
       (t (error 'beadwork-error :message
-                "Link target must have 'ref' or 'id' field")))))
+                (format nil "~A must have a 'ref' or 'id' field" field))))))
+
+(defun %resolve-issue-ref (value &key (field "reference"))
+  "Resolve VALUE, an issue reference, to a beadwork issue ID string.
+
+VALUE may be a bare ID string (\"bd-xxx\") or an object of the form
+{\"ref\": \"label\"} / {\"id\": \"bd-xxx\"}.  Accepting both shapes keeps the
+ops consistent: `update`, `comment`, and `link` all name issues the same way,
+so one payload can mix them without conflicting `id` types (bd-3ze).
+FIELD names the referring location in error messages."
+  (cond
+    ((stringp value) value)
+    ((hash-table-p value) (%resolve-ref value :field field))
+    (t (error 'beadwork-error :message
+              (format nil "~A must be an issue id string or an object with a 'ref' or 'id' field, got: ~S"
+                      field value)))))
 
 ;;; ============================================================================
 ;;; Operation handlers
@@ -174,8 +193,9 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
         id))))
 
 (defun %batch-update (store op result-array)
-  "Handle an update operation."
-  (let* ((id (%batch-get-required op "id" :type :string))
+  "Handle an update operation.  ID accepts a bare id string or a {ref|id} object."
+  (let* ((id (%resolve-issue-ref (%batch-get-required op "id" :type :any)
+                                 :field "update id"))
          (title (%batch-get-string op "title"))
          (status-str (%batch-get-string op "status"))
          (status (when status-str (parse-status status-str)))
@@ -200,13 +220,14 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
 
 (defun %batch-link (store op result-array)
   "Handle a link operation (pass 2 -- all creates resolved).
+SOURCE and TARGET each accept a bare id string or a {ref|id} object.
 Uses upsert so that linking an already-dependent issue updates the type."
-  (let* ((source-ht (%batch-get-required op "source" :type :hash-table))
-         (target-ht (%batch-get-required op "target" :type :hash-table))
-         (relation-str (%batch-get-string op "relation"))
+  (let* ((relation-str (%batch-get-string op "relation"))
          (relation (if relation-str (parse-dependency-type relation-str) :blocks))
-         (source-id (%resolve-ref source-ht))
-         (target-id (%resolve-ref target-ht))
+         (source-id (%resolve-issue-ref (%batch-get-required op "source" :type :any)
+                                        :field "link source"))
+         (target-id (%resolve-issue-ref (%batch-get-required op "target" :type :any)
+                                        :field "link target"))
          (now-str (format-timestamp (local-time:now))))
     ;; Validate endpoints (bd-wux): %resolve-ref only resolves {ref}/{id}; it does
     ;; not check existence, so an unknown id or pasted prose would otherwise become
@@ -233,10 +254,11 @@ Uses upsert so that linking an already-dependent issue updates the type."
       (vector-push-extend result-ht result-array))))
 
 (defun %batch-comment (store op result-array)
-  "Handle a comment operation. Target can be {ref: ...} or {id: ...}."
-  (let* ((id-ht (%batch-get-required op "id" :type :hash-table))
-         (text (%batch-get-required op "text" :type :string))
-         (target-id (%resolve-ref id-ht)))
+  "Handle a comment operation.
+ID accepts a bare id string or a {ref: ...} / {id: ...} object."
+  (let* ((text (%batch-get-required op "text" :type :string))
+         (target-id (%resolve-issue-ref (%batch-get-required op "id" :type :any)
+                                        :field "comment id")))
     (add-comment store target-id "[batch]" text)
     (let ((result-ht (make-hash-table :test #'equal)))
       (setf (gethash "op" result-ht) "comment")
@@ -267,14 +289,17 @@ Uses upsert so that linking an already-dependent issue updates the type."
    key result-json (format-timestamp (local-time:now))))
 
 (defun %batch-link-refs (ops-vec)
-  "Return a hash-table of every ref named by a link op's source or target."
+  "Return a hash-table of every ref label named by a link op's source or target.
+
+Endpoints may also be bare id strings (bd-3ze), which carry no ref label and
+contribute nothing here."
   (let ((refs (make-hash-table :test #'equal)))
     (dotimes (i (length ops-vec))
       (let ((op (aref ops-vec i)))
         (when (string= (%batch-get-string op "op") "link")
           (dolist (side '("source" "target"))
-            (let ((target (%batch-get op side :type :hash-table)))
-              (when target
+            (let ((target (%batch-get op side :type :any)))
+              (when (hash-table-p target)
                 (let ((ref (%batch-get-string target "ref")))
                   (when ref (setf (gethash ref refs) t)))))))))
     refs))
@@ -298,6 +323,34 @@ This is the flat-vs-nested mistake that silently produces unparented issues."
                             ref title)
                     warnings))))))
     (nreverse warnings)))
+
+;;; ============================================================================
+;;; Per-operation error context
+;;; ============================================================================
+
+(defun %op-error-text (condition)
+  "Report text for CONDITION without a duplicate \"Beadwork error: \" prefix.
+
+A nested report reads as noise (\"Beadwork error: operation 2 (update):
+Beadwork error: ...\"), so prefer the raw message slot when it is bound and
+fall back to the condition's own report for subclasses that only fill in
+structured slots (for example issue-not-found)."
+  (if (and (typep condition 'beadwork-error)
+           (slot-boundp condition '%message))
+      (beadwork-error-message condition)
+      (princ-to-string condition)))
+
+(defmacro %with-op-context ((index op-type) &body body)
+  "Run BODY, prefixing any beadwork-error with the failing operation's position.
+
+Without this a five-op payload reports `Field 'id' must be a string` with no
+hint which operation produced it, so the caller has to bisect the operations
+array.  INDEX is the zero-based position; OP-TYPE is the op's type string."
+  `(handler-case (progn ,@body)
+     (beadwork-error (condition)
+       (error 'beadwork-error :message
+              (format nil "operation ~D (~A): ~A"
+                      (1+ ,index) ,op-type (%op-error-text condition))))))
 
 ;;; ============================================================================
 ;;; Main entry point
@@ -358,45 +411,52 @@ Returns a JSON string with {ok: true/false, results: [...], error: ...}."
                  ;; Pass 1: Creates (collect all refs)
                  (dotimes (i (length ops-vec))
                    (let* ((op-ht (aref ops-vec i))
-                          (op-type (%batch-get-string op-ht "op")))
+                          (op-type (%batch-get-required op-ht "op" :type :string)))
                      (when (string= op-type "create")
-                       (%batch-create store op-ht result-array
-                                      :source-repo source-repo))))
+                       (%with-op-context (i op-type)
+                         (%batch-create store op-ht result-array
+                                        :source-repo source-repo)))))
                  ;; Pass 2: Updates, links, comments (resolve refs)
                  (dotimes (i (length ops-vec))
                    (let* ((op-ht (aref ops-vec i))
-                          (op-type (%batch-get-string op-ht "op")))
-                     (cond
-                       ((string= op-type "update")
-                        (%batch-update store op-ht result-array))
-                       ((string= op-type "link")
-                        (%batch-link store op-ht result-array))
-                       ((string= op-type "comment")
-                        (%batch-comment store op-ht result-array))
-                       ((string= op-type "create")
-                        ;; Already handled in pass 1
-                        nil)
-                       (t
-                        (error 'beadwork-error :message
-                               (format nil "Unknown operation type: '~A'" op-type))))))
-                 (if dry-run
-                     (sqlite:execute-non-query db "ROLLBACK")
-                     (sqlite:execute-non-query db "COMMIT"))
-                 ;; Build success response
-                 (let ((response-ht (make-hash-table :test #'equal)))
-                   (setf (gethash "ok" response-ht) t)
-                   (setf (gethash "results" response-ht) result-array)
-                   (when dry-run
-                     (setf (gethash "dry-run" response-ht) t))
-                   (let ((warnings (%batch-orphan-warnings ops-vec)))
+                          (op-type (%batch-get-required op-ht "op" :type :string)))
+                     (%with-op-context (i op-type)
+                       (cond
+                         ((string= op-type "update")
+                          (%batch-update store op-ht result-array))
+                         ((string= op-type "link")
+                          (%batch-link store op-ht result-array))
+                         ((string= op-type "comment")
+                          (%batch-comment store op-ht result-array))
+                         ((string= op-type "create")
+                          ;; Already handled in pass 1
+                          nil)
+                         (t
+                          (error 'beadwork-error :message
+                                 (format nil "Unknown operation type: '~A'" op-type)))))))
+                 ;; Advisory warnings are computed while the transaction is
+                 ;; still open.  An error in the warning pass must roll the
+                 ;; batch back, never report failure after a committed write
+                 ;; (bd-3ze: the link-refs walk used to reject string-form
+                 ;; endpoints after COMMIT, so ok:false but deps persisted).
+                 (let ((warnings (%batch-orphan-warnings ops-vec)))
+                   (if dry-run
+                       (sqlite:execute-non-query db "ROLLBACK")
+                       (sqlite:execute-non-query db "COMMIT"))
+                   ;; Build success response
+                   (let ((response-ht (make-hash-table :test #'equal)))
+                     (setf (gethash "ok" response-ht) t)
+                     (setf (gethash "results" response-ht) result-array)
+                     (when dry-run
+                       (setf (gethash "dry-run" response-ht) t))
                      (when warnings
                        (setf (gethash "warnings" response-ht)
-                             (coerce warnings 'vector))))
-                   (let ((response-json (com.inuoe.jzon:stringify response-ht)))
-                     ;; Store for idempotency -- never for a dry run (bd-vcu)
-                     (when (and effective-key (not dry-run))
-                       (%store-idempotency store effective-key response-json))
-                     response-json)))
+                             (coerce warnings 'vector)))
+                     (let ((response-json (com.inuoe.jzon:stringify response-ht)))
+                       ;; Store for idempotency -- never for a dry run (bd-vcu)
+                       (when (and effective-key (not dry-run))
+                         (%store-idempotency store effective-key response-json))
+                       response-json))))
             ;; Rollback on any error during processing
             (handler-case
                 (sqlite:execute-non-query db "ROLLBACK")

@@ -1849,7 +1849,8 @@ forms append the issue's graph neighborhood and the JSON form includes it."
       ]
     },
     { \"op\": \"link\", \"source\": { \"ref\": \"core\" }, \"target\": { \"ref\": \"ui\" }, \"relation\": \"blocks\" },
-    { \"op\": \"comment\", \"id\": { \"ref\": \"epic\" }, \"text\": \"Batched creation -- edit this template\" }
+    { \"op\": \"comment\", \"id\": { \"ref\": \"epic\" }, \"text\": \"Batched creation -- edit this template\" },
+    { \"op\": \"update\", \"id\": \"bd-xxx\", \"status\": \"in_progress\" }
   ]
 }"
   "Example JSON payload for bw batch --example.")
@@ -1888,11 +1889,15 @@ Payload is a JSON object with an 'operations' array. Each operation has an 'op' 
   create: {\"op\":\"create\", \"title\":\"...\", \"type\":\"task|bug|feature|epic|chore|docs\",
            \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"repo\":\"...\", \"children\":[...]}
   update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", ...}
-  link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"}, \"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
+  link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"},\"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
           DIRECTION: source depends on target. A blocks link means source is
           BLOCKED BY target; parent-child makes source a child of target.
           e.g. {source:{ref:child}, target:{ref:parent}, relation:\"parent-child\"}
   comment:{\"op\":\"comment\", \"id\":{\"ref\":\"x\"|\"id\":\"bd-xxx\"}, \"text\":\"...\"}
+Anywhere an issue is named (update/comment id, link source/target) both shapes
+work: a bare id string (\"bd-xxx\") or an object ({\"ref\":\"label\"} / {\"id\":\"bd-xxx\"}).
+A failing op is reported as 'operation N (op-type): ...' so a mixed batch is
+debuggable without bisecting the operations array.
 Use --example to print a complete example payload."
    :options (append (batch/options) (global-options))
    :handler #'batch/handler))
