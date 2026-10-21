@@ -27,7 +27,10 @@
                  (:file "id")
                  (:file "doctor")
                  (:file "batch")
-                 (:file "cli"))))
+                 (:file "cli")
+                 (:module "commands"
+                  :components
+                  ((:file "tree"))))))
   :in-order-to ((asdf:test-op (asdf:test-op "beadwork/tests"))))
 
 (asdf:defsystem "beadwork/tests"
