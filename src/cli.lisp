@@ -1748,33 +1748,39 @@ forms append the issue's graph neighborhood and the JSON form includes it."
       (clingon:exit 2))
     (let ((result (run-doctor-status-docs store status-dir)))
       (when (getf result :error)
+        (unless (eq *format* :json)
+          (format t "bw doctor: ~A~%" (getf result :error)))
         (clingon:exit 2))
-      ;; Soft-info (no What's Next section) -- not an error, exit 0
-      (when (getf result :info)
-        (clingon:exit 0))
-      (let* ((summary (getf result :summary))
-             (ok (getf summary :ok))
-             (stale (getf summary :stale))
-             (missing (getf summary :missing))
-             (orphan (getf summary :orphan))
-             (healthy (and (zerop stale) (zerop missing) (zerop orphan))))
+      (let* ((checked (getf result :checked))
+             (summary (getf result :summary))
+             (ok (getf summary :ok 0))
+             (stale (getf summary :stale 0))
+             (missing (getf summary :missing 0))
+             (orphan (getf summary :orphan 0))
+             (healthy (and checked
+                           (zerop stale) (zerop missing) (zerop orphan))))
         (if (eq *format* :json)
-            (format t "~A"
-                    (jzon:stringify
-                     (list (list "ok" ok)
-                           (list "stale" stale)
-                           (list "missing" missing)
-                           (list "orphan" orphan)
-                           (list "healthy" healthy))))
-            (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN -- exit ~D~%"
-                    ok stale missing orphan (if healthy 0 1)))
-        (clingon:exit (if healthy 0 1))))))
+            (let ((ht (make-hash-table :test #'equal)))
+              (setf (gethash "checked" ht) (if checked t nil))
+              (setf (gethash "ok" ht) ok)
+              (setf (gethash "stale" ht) stale)
+              (setf (gethash "missing" ht) missing)
+              (setf (gethash "orphan" ht) orphan)
+              (setf (gethash "healthy" ht) (if checked (and healthy t) 'null))
+              (format t "~A" (jzon:stringify ht)))
+            (if checked
+                (format t "~D OK, ~D STALE, ~D MISSING, ~D ORPHAN -- exit ~D~%"
+                        ok stale missing orphan (if healthy 0 1))
+                (format t "NOT CHECKED -- ~A~%" (getf result :info))))
+        ;; Not checked exits 0 by design (a doc with no next steps is legal);
+        ;; the output line is what makes the state visible (bd-fs9).
+        (clingon:exit (if checked (if healthy 0 1) 0))))))
 
 (defun doctor-health/command ()
   (clingon:make-command
    :name "health"
    :description "One-line doctor summary for cold-start integration"
-   :options (global-options)
+   :options (append (doctor/options) (global-options))
    :handler #'doctor-health/handler))
 
 (defun doctor/handler (cmd)

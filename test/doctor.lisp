@@ -164,7 +164,8 @@
         (beadwork::close-store store)
         ;; Should return a plist
         (true (getf result :status-doc))
-        (true (getf result :findings))
+        (is eq t (getf result :checked)
+            "the latest status doc must be parseable")
         (true (getf result :summary))
         (true (listp (getf result :findings)))))))
 
@@ -193,3 +194,106 @@
                           (beadwork::report-doctor-findings result :json)))))
     (true (ppcre:scan "\"status-doc\"" json-output))
     (true (ppcre:scan "\"healthy\"" json-output))))
+
+;;; ============================================================================
+;;; What's Next parsing: prose, section end, found-p (bd-fs9, bd-sa3.11.5)
+;;; ============================================================================
+
+(define-test parse-whats-next-prose-with-ids
+  :parent doctor-suite
+  "bd-fs9: a prose paragraph after the marker still names issues; parse the ids."
+  (let* ((lines '("<!-- bw:whats-next -->"
+                  "## What's Next"
+                  ""
+                  "Start bd-sa3.2 (P1): split cogen-ai into two systems."
+                  "Then re-run the corpus (bd-qsj)."
+                  "Nothing to file here."
+                  ""))
+         (rows (beadwork::parse-whats-next-table lines)))
+    (is = 2 (length rows))
+    (is equal "bd-sa3" (third (first rows)))
+    (is equal "bd-qsj" (third (second rows)))
+    (is equal "Start bd-sa3.2 (P1): split cogen-ai into two systems."
+              (second (first rows)))))
+
+(define-test parse-whats-next-stops-at-next-heading
+  :parent doctor-suite
+  "bd-sa3.11.5: content after the next heading is not part of What's Next."
+  (let* ((lines '("<!-- bw:whats-next -->"
+                  "## What's Next"
+                  ""
+                  "1. Real next step (bd-abc)"
+                  ""
+                  "## Postscript"
+                  ""
+                  "1. This is prose, not a task"
+                  "2. Neither is this"
+                  ""))
+         (rows (beadwork::parse-whats-next-table lines)))
+    (is = 1 (length rows))
+    (is equal "bd-abc" (third (first rows)))))
+
+(define-test parse-whats-next-reports-found-p
+  :parent doctor-suite
+  "FOUND-P distinguishes 'no section' from 'section with nothing parseable'."
+  (multiple-value-bind (rows found)
+      (beadwork::parse-whats-next-table '("## Summary" "text"))
+    (is = 0 (length rows))
+    (false found))
+  (multiple-value-bind (rows found)
+      (beadwork::parse-whats-next-table '("<!-- bw:whats-next -->"))
+    (is = 0 (length rows))
+    (true found)))
+
+(define-test doctor-json-says-not-checked
+  :parent doctor-suite
+  "bd-fs9: an unchecked run must not claim healthy, and empty findings is []."
+  (let* ((result (list :status-doc #P"doc.md"
+                       :checked nil
+                       :findings nil
+                       :summary (list :ok 0 :stale 0 :missing 0 :orphan 0)
+                       :info "No What's Next section found in doc.md."))
+         (output (with-output-to-string (s)
+                   (let ((*standard-output* s))
+                     (beadwork::report-doctor-findings result :json))))
+         (parsed (com.inuoe.jzon:parse output)))
+    (true (hash-table-p parsed))
+    (false (gethash "checked" parsed))
+    (is eq 'null (gethash "healthy" parsed))
+    (true (vectorp (gethash "findings" parsed)))
+    (is = 0 (length (gethash "findings" parsed)))
+    (is equal "No What's Next section found in doc.md." (gethash "info" parsed))))
+
+(define-test doctor-json-says-checked-and-clean
+  :parent doctor-suite
+  (let* ((findings (list (list :status :ok :id "bd-abc" :task "Fix bug"
+                              :issue-status :open)))
+         (result (list :status-doc #P"doc.md"
+                       :checked t
+                       :findings findings
+                       :summary (list :ok 1 :stale 0 :missing 0 :orphan 0)))
+         (output (with-output-to-string (s)
+                   (let ((*standard-output* s))
+                     (beadwork::report-doctor-findings result :json))))
+         (parsed (com.inuoe.jzon:parse output)))
+    (is eq t (gethash "checked" parsed))
+    (is eq t (gethash "healthy" parsed))
+    (is = 1 (length (gethash "findings" parsed)))
+    (is equal 1 (gethash "ok" (gethash "summary" parsed)))))
+
+(define-test doctor-resolves-prose-whats-next
+  :parent doctor-suite
+  "End-to-end: a status doc whose What's Next is prose is actually checked."
+  ;; find-latest-status-doc only considers digit-prefixed filenames.
+  (uiop:with-temporary-file (:pathname doc :type "md" :prefix "20260101T0000-")
+    (with-open-file (out doc :direction :output :if-exists :supersede)
+      (format out "<!-- bw:whats-next -->~%## What's Next~%")
+      (format out "~%Ship bd-abc next.~%"))
+    (let ((store (beadwork::open-store ":memory:"))
+          (status-dir (uiop:pathname-directory-pathname doc)))
+      (unwind-protect
+           (let ((result (beadwork::run-doctor-status-docs store status-dir)))
+             (true (getf result :checked))
+             (is = 1 (length (getf result :findings)))
+             (is eq :missing (getf (first (getf result :findings)) :status)))
+        (beadwork::close-store store)))))

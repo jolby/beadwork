@@ -58,64 +58,98 @@ Returns a plist with keys :status (:ok, :stale, :missing, :orphan),
                   :source doc-str
                   :issue-status nil))))))
 
+(defparameter *whats-next-heading*
+  "^(?:#+|\\*+)\\s*(?:What'?s\\s+Next|Next\\s+Steps?|Action\\s+Items?|Proposed\\s+Next\\s+Steps?|Remaining\\s+Work)"
+  "Heading text that opens a What's Next section without the explicit marker.")
+
 (defun parse-whats-next-table (lines)
   "Parse the What's Next section from LINES (list of strings).
+
+Returns (values ROWS FOUND-P).
+  ROWS    - list of (priority task id-text); may be empty.
+  FOUND-P - true when a marker or heading opened a section, even if no row
+            could be parsed from it.
 
 Detection priority:
   1. Explicit marker: <!-- bw:whats-next --> (most reliable)
   2. Heading variants: 'What's Next', 'Next Steps', 'Action Items', etc.
 
-Supports two table formats:
-  1. Pipe table: heading + | Priority | Task | ID | separator + data rows
-  2. Numbered list: heading + 1. Task text (possibly with embedded bw ID)
-Also accepts both markdown (#) and org-mode (*) headings."
-  (let ((in-section nil)
+The section ends at the next heading of the same style (markdown or org) or at
+end of file, so a postscript cannot become false rows (bd-sa3.11.5).  Rows
+come from a pipe table, else a numbered/bulleted list, else prose lines that
+name a bd id; prose lines without an id are ignored rather than reported as
+orphans (bd-fs9)."
+  (let ((state :before)        ; :before, :armed (marker seen), :in-section
+        (style nil)            ; :md or :org -- heading style that opened it
         (past-separator nil)
-        (started nil)
-        (rows nil))
-    (dolist (line lines)
-      (cond
-        ;; Explicit marker: <!-- bw:whats-next -->
-        ((search "<!-- bw:whats-next -->" line)
-         (setf in-section t))
-        ;; Heading variants: What's Next, Next Steps, Action Items, Proposed Next Steps
-        ((ppcre:scan "^(?:#+|\\*+)\\s*(?:What'?s\\s+Next|Next\\s+Steps?|Action\\s+Items?|Proposed\\s+Next\\s+Steps?|Remaining\\s+Work)" line)
-         (setf in-section t))
-        ;; Table: detect separator row (dashes and pipes only)
-        ((and in-section
-              (ppcre:scan "^\\|" line)
-              (ppcre:scan "^\\|[- :|]*\\|$" line))
-         (setf past-separator t))
-        ;; Table: parse pipe-delimited data row
-        ((and in-section past-separator
-              (ppcre:scan "^\\|" line))
-         (let ((cells (mapcar (lambda (c) (string-trim " " c))
-                              (cdr (ppcre:split "\\|" line)))))
-           (when (string= "" (car (last cells)))
-             (setf cells (butlast cells)))
-           (when (>= (length cells) 2)
-             (let ((priority (first cells))
-                   (task (second cells))
-                   (id (if (>= (length cells) 3) (third cells) "")))
-               (when (plusp (length (string-trim " " task)))
-                 (push (list priority task id) rows)
-                 (setf started t))))))
-        ;; List: numbered item (1. 2. etc.) or bullet (- *)
-        ((and in-section (not past-separator)
-              (ppcre:scan "^\\s*(?:\\d+\\.\\s+|[-*]\\s+)" line))
-         (let* ((task (string-trim " "
-                         (ppcre:regex-replace
-                          "^\\s*(?:\\d+\\.\\s+|[-*]\\s+)" line "")))
-                (bw-id (or (extract-bw-id task) "")))
-           (when (plusp (length task))
-             (push (list "—" task bw-id) rows)
-             (setf started t))))
-        ;; Exit on blank line or next heading (only after rows collected)
-        ((and in-section started
-              (or (string= "" (string-trim " " line))
-                  (ppcre:scan "^(?:#+|\\*+)\\s" line)))
-         (return))))
-    (nreverse rows)))
+        (table-rows nil)
+        (list-rows nil)
+        (prose-rows nil)
+        (found-p nil))
+    (labels ((ends-section-p (line)
+               (or (ppcre:scan "^#+\\s" line)
+                   (and (eq style :org) (ppcre:scan "^\\*+\\s+\\S" line))))
+             (active-p ()
+               (member state '(:armed :in-section))))
+      (dolist (line lines)
+        (cond
+          ;; Explicit marker
+          ((search "<!-- bw:whats-next -->" line)
+           (setf state :armed found-p t))
+          ;; End of the section: next heading of the same style
+          ((and (eq state :in-section) (ends-section-p line))
+           (return))
+          ;; Markdown heading: titles the section when armed, may open it by name
+          ((ppcre:scan "^#+\\s" line)
+           (cond
+             ((eq state :armed) (setf state :in-section style :md))
+             ((and (eq state :before) (ppcre:scan *whats-next-heading* line))
+              (setf state :in-section style :md found-p t))))
+          ;; Org heading: same, but only when it names the section
+          ((ppcre:scan "^\\*+\\s+\\S" line)
+           (cond
+             ((and (eq state :armed) (ppcre:scan *whats-next-heading* line))
+              (setf state :in-section style :org))
+             ((and (eq state :before) (ppcre:scan *whats-next-heading* line))
+              (setf state :in-section style :org found-p t))))
+          ;; Table separator
+          ((and (active-p)
+                (ppcre:scan "^\\|" line)
+                (ppcre:scan "^\\|[- :|]*\\|$" line))
+           (setf state :in-section past-separator t))
+          ;; Table data row
+          ((and (active-p) past-separator (ppcre:scan "^\\|" line))
+           (setf state :in-section)
+           (let ((cells (mapcar (lambda (c) (string-trim " " c))
+                                (cdr (ppcre:split "\\|" line)))))
+             (when (string= "" (car (last cells)))
+               (setf cells (butlast cells)))
+             (when (>= (length cells) 2)
+               (let ((priority (first cells))
+                     (task (second cells))
+                     (id (if (>= (length cells) 3) (third cells) "")))
+                 (when (plusp (length (string-trim " " task)))
+                   (push (list priority task id) table-rows))))))
+          ;; Numbered or bulleted list item (only before a table starts)
+          ((and (active-p) (not past-separator)
+                (ppcre:scan "^\\s*(?:\\d+\\.\\s+|[-*]\\s+)" line))
+           (setf state :in-section)
+           (let* ((task (string-trim " "
+                           (ppcre:regex-replace
+                            "^\\s*(?:\\d+\\.\\s+|[-*]\\s+)" line "")))
+                  (bw-id (or (extract-bw-id task) "")))
+             (when (plusp (length task))
+               (push (list "—" task bw-id) list-rows))))
+          ;; Prose: keep only lines that name an issue
+          ((and (active-p) (not (string= "" (string-trim " " line))))
+           (setf state :in-section)
+           (let ((bw-id (extract-bw-id line)))
+             (when bw-id
+               (push (list "—" (string-trim " " line) bw-id) prose-rows)))))))
+    (values (cond (table-rows (nreverse table-rows))
+                  (list-rows (nreverse list-rows))
+                  (t (nreverse prose-rows)))
+            found-p)))
 
 (defun find-latest-status-doc (status-dir)
   "Return the pathname of the latest status doc in STATUS-DIR.
@@ -138,30 +172,39 @@ Returns the pathname if it exists, or NIL."
 (defun run-doctor-status-docs (store status-dir)
   "Run the status-docs check. Reads the latest status doc, parses the
 What's Next section, and classifies each row against STORE.
-Returns a plist with :status-doc (pathname), :findings (list of classification
-plists), and :summary (plist with :ok, :stale, :missing, :orphan counts).
-If no What's Next section is found, returns a soft-info result (not an error)."
+
+Returns a plist with :status-doc (pathname), :checked (true when at least one
+row was classified), :findings (list of classification plists), :summary (plist
+with :ok, :stale, :missing, :orphan counts), and :info (why nothing was checked,
+when :checked is NIL).  A doc with no parseable What's Next is not an error, but
+it must be recognizable as *not checked* (bd-fs9)."
   (let ((doc (find-latest-status-doc status-dir)))
     (unless doc
       (return-from run-doctor-status-docs
-        (list :status-doc nil :findings nil :summary nil :error "No status docs found")))
-    (let* ((lines (uiop:read-file-lines doc))
-           (rows (parse-whats-next-table lines)))
-      (if rows
-          (let* ((findings (mapcar (lambda (row) (classify-row row store :doc-path doc)) rows))
-                 (ok (count :ok findings :key (lambda (f) (getf f :status))))
-                 (stale (count :stale findings :key (lambda (f) (getf f :status))))
-                 (missing (count :missing findings :key (lambda (f) (getf f :status))))
-                 (orphan (count :orphan findings :key (lambda (f) (getf f :status)))))
+        (list :status-doc nil :findings nil :summary nil
+              :error "No status docs found")))
+    (let ((lines (uiop:read-file-lines doc)))
+      (multiple-value-bind (rows found-p)
+          (parse-whats-next-table lines)
+        (if rows
+            (let* ((findings (mapcar (lambda (row) (classify-row row store :doc-path doc)) rows))
+                   (ok (count :ok findings :key (lambda (f) (getf f :status))))
+                   (stale (count :stale findings :key (lambda (f) (getf f :status))))
+                   (missing (count :missing findings :key (lambda (f) (getf f :status))))
+                   (orphan (count :orphan findings :key (lambda (f) (getf f :status)))))
+              (list :status-doc doc
+                    :checked t
+                    :findings findings
+                    :summary (list :ok ok :stale stale :missing missing :orphan orphan)))
             (list :status-doc doc
-                  :findings findings
-                  :summary (list :ok ok :stale stale :missing missing :orphan orphan)))
-          ;; No What's Next section — not an error, just a soft-info
-          (list :status-doc doc
-                :findings nil
-                :summary (list :ok 0 :stale 0 :missing 0 :orphan 0)
-                :info (format nil "No What's Next section found in ~A. Add <!-- bw:whats-next --> before the section to enable cross-referencing."
-                              (file-namestring doc)))))))
+                  :checked nil
+                  :findings nil
+                  :summary (list :ok 0 :stale 0 :missing 0 :orphan 0)
+                  :info (if found-p
+                            (format nil "What's Next section found in ~A but no issue references were parsed -- expected a table, a list, or lines naming bd-XXXX."
+                                    (file-namestring doc))
+                            (format nil "No What's Next section found in ~A. Add <!-- bw:whats-next --> before the section, or name issues inline so they can be checked."
+                                    (file-namestring doc)))))))))
 
 (defun format-finding-line (finding)
   "Format a single finding as a human-readable line.
@@ -203,6 +246,7 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
           2)
          (info
           (format t "bw doctor: ~A~%" info)
+          (format t "  NOT CHECKED -- nothing was cross-referenced.~%")
           0)
          (t
           (format t "📋 bw doctor: ~A~%~%" (file-namestring doc))
@@ -217,28 +261,38 @@ Returns the appropriate exit code: 0 if healthy, 1 if problems found."
      (let* ((doc (getf result :status-doc))
             (findings (getf result :findings))
             (summary (getf result :summary))
-            (healthy (and (zerop (getf summary :stale 0))
+            (checked (getf result :checked))
+            (healthy (and checked
+                          (zerop (getf summary :stale 0))
                           (zerop (getf summary :missing 0))
-                          (zerop (getf summary :orphan 0)))))
-       (format t "~A"
-               (jzon:stringify
-                (list (list "status-doc" (when doc (namestring doc)))
-                      (list "findings"
-                            (mapcar (lambda (f)
-                                      (list (list "id" (getf f :id))
-                                            (list "task" (getf f :task))
-                                            (list "status" (symbol-name (getf f :status)))
-                                            (list "source" (getf f :source))
-                                            (list "issue-status"
-                                                  (when (getf f :issue-status)
-                                                    (string-downcase
-                                                     (symbol-name (getf f :issue-status)))))))
-                                    findings))
-                      (list "summary" (list (list "ok" (getf summary :ok 0))
-                                            (list "stale" (getf summary :stale 0))
-                                            (list "missing" (getf summary :missing 0))
-                                            (list "orphan" (getf summary :orphan 0))))
-                      (list "healthy" healthy)
-                      (list "info" (getf result :info)))
-                :pretty t))
+                          (zerop (getf summary :orphan 0))))
+            (counts (make-hash-table :test #'equal))
+            (ht (make-hash-table :test #'equal)))
+       ;; jzon writes hash-tables as objects and lists as arrays; the old code
+       ;; produced "[[\"status-doc\", ...]]" instead of an object (bd-7b6).
+       (setf (gethash "ok" counts) (getf summary :ok 0))
+       (setf (gethash "stale" counts) (getf summary :stale 0))
+       (setf (gethash "missing" counts) (getf summary :missing 0))
+       (setf (gethash "orphan" counts) (getf summary :orphan 0))
+       (setf (gethash "status-doc" ht) (if doc (namestring doc) 'null))
+       (setf (gethash "checked" ht) (if checked t nil))
+       (setf (gethash "findings" ht)
+             (coerce (mapcar (lambda (f)
+                               (let ((fht (make-hash-table :test #'equal)))
+                                 (setf (gethash "id" fht) (or (getf f :id) 'null))
+                                 (setf (gethash "task" fht) (or (getf f :task) 'null))
+                                 (setf (gethash "status" fht) (symbol-name (getf f :status)))
+                                 (setf (gethash "source" fht) (or (getf f :source) 'null))
+                                 (setf (gethash "issue-status" fht)
+                                       (if (getf f :issue-status)
+                                           (string-downcase
+                                            (symbol-name (getf f :issue-status)))
+                                           'null))
+                                 fht))
+                             findings)
+                     'vector))
+       (setf (gethash "summary" ht) counts)
+       (setf (gethash "healthy" ht) (if checked (and healthy t) 'null))
+       (setf (gethash "info" ht) (or (getf result :info) 'null))
+       (format t "~A" (jzon:stringify ht :pretty t))
        (if healthy 0 1)))))
