@@ -2039,23 +2039,13 @@ Use --example to print a complete example payload."
                        (sync/command)
                        (batch/command))))
 
-(defun restore-default-sigpipe ()
-  "Let the OS terminate bw when its stdout reader goes away (bd-sso).
-
-SBCL ignores SIGPIPE and turns a broken pipe into a condition, but only when a
-write fails exactly at a buffer boundary.  When the reader closes mid-buffer,
-the fd-stream output path retries without progress: the condition never
-reaches Lisp, so no handler runs, stderr stays empty, and the process spins at
-100% CPU until the caller is killed.  `bw list --format json | head -3` hits it
-easily, and it stalls an agent session for as long as the pipe is open.
-
-Restoring the default disposition makes bw die on SIGPIPE like cat or grep
-(exit status 141), which is what a pipeline producer is supposed to do."
-  #+sbcl (sb-sys:enable-interrupt sb-unix:sigpipe :default)
-  #-sbcl (values))
-
 (defun main ()
-  "Entry point for the bw executable."
-  (restore-default-sigpipe)
-  (let ((app (top-level/command)))
-    (clingon:run app)))
+  "Entry point for the bw executable.
+
+CL-CLI-RUNTIME takes over the process-level behaviour every dumped binary
+needs: death by SIGPIPE when a reader goes away (instead of SBCL retrying a
+mid-buffer broken pipe below Lisp, forever -- bd-sso), and an error path that
+reports to stderr and exits 1 instead of parking in a debugger reading a dead
+stdin.  See ~/work/cl-cli-runtime."
+  (cl-cli-runtime:run (lambda ()
+                        (clingon:run (top-level/command)))))
