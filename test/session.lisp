@@ -146,7 +146,12 @@ and filter tests."
   :parent session-suite
   "Absent ended-at / active-issue-id serialize as JSON null, not false."
   (beadwork:with-store (store ":memory:" :prefix "bd")
-    (plant-session store "S-open" "2026-10-06T10:00:00-07:00")
+    ;; Started five minutes ago, not on a hard-coded date: the state assertion
+    ;; below is about serialization, and a fixed date turns stale after
+    ;; *session-stale-hours* (bd-kjp).
+    (plant-session store "S-open"
+                   (beadwork::format-timestamp
+                    (local-time:timestamp- (local-time:now) 5 :minute)))
     (let ((ht (beadwork::session->cli-json
                (beadwork::get-session store "S-open"))))
       (is eq 'null (gethash "ended-at" ht))
