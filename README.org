@@ -271,7 +271,13 @@ beadwork/
 │   ├── sync.lisp       # JSONL import/export (br-compatible)
 │   ├── batch.lisp      # Multi-op transactions, idempotency, dry-run
 │   ├── doctor.lisp     # Status-doc <-> issue cross-check
-│   └── cli.lisp        # clingon commands (list/create/update/session/...)
+│   ├── cli.lisp        # plumbing: store resolution, output helpers, global options
+│   └── commands/       # one file per command group
+│       ├── issue.lisp # list/ready/create/show/update/close/reopen/delete
+│       ├── graph.lisp # dep/label/comment/blocked
+│       ├── session.lisp # session subcommands
+│       ├── misc.lisp  # search/stats/init/sync/doctor/batch
+│       └── tree.lisp  # top-level command tree + main (loaded last)
 ├── test/               # parachute suite, one file per area
 │   └── cli.lisp        # end-to-end: spawns bin/bw, one test per command
 ├── beadwork.asd        # ASDF system definition
