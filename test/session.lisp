@@ -132,7 +132,10 @@ reported '0 min ago'. The shared helper must measure now - started."
       (true (<= 5390 seconds 5410)
             (format nil "expected ~D seconds for a 90-minute-old session, got ~D"
                     5400 seconds))
-      (is equal 90 (floor seconds 60)))))
+      ;; The stored timestamp is serialized with sub-second rounding, so the
+      ;; difference can land at 5399.9s.  The unit under test is minutes, so
+      ;; round to the nearest one -- flooring makes this test flake by 1.
+      (is equal 90 (round seconds 60)))))
 
 (define-test format-session-duration-renders-units
   :parent session-suite

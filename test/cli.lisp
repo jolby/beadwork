@@ -242,3 +242,614 @@ agents parsing `bw list --format json` break when the result set is empty."
     (true (search "render-stack-meta" scoped))
     (true (search "--all-repos" scoped))
     (true (search "all repos" all))))
+
+;;; ============================================================================
+;;; End-to-end CLI tests -- the real bin/bw as a subprocess (bd-orw)
+;;;
+;;; These run the built binary, not the parent image.  Three things only a child
+;;; process can show are the point: a real argv, a real exit code, and a clean
+;;; image per case.  In-process calls were rejected because CLINGON:EXIT quits
+;;; the process, and because the CLI keeps state in dynamic globals (*store*,
+;;; *format*, *no-color*) that would leak from one case to the next.  cogen-cli
+;;; reached the same conclusion (test/cli-integration-tests.lisp there).
+;;;
+;;; Isolation: every case gets its own --db directory under /tmp and runs from a
+;;; scratch root with no .beads/ and no .git/, so a case can never read the
+;;; project database or auto-scope by the checkout's repo name.
+;;; ============================================================================
+
+(defvar *bw-binary-path* nil
+  "Resolved path to bin/bw, computed once per run.")
+
+(defvar *bw-scratch-root* nil
+  "Per-run scratch directory; the working directory of every child.")
+
+(defvar *bw-case-counter* 0
+  "Counter for unique per-case directories.")
+
+(defun bw-source-newest-write-date ()
+  "Write date of the newest file that goes into the binary."
+  (let* ((root (asdf:system-source-directory :beadwork))
+         (sources (append (directory (merge-pathnames "src/*.lisp" root))
+                          (list (asdf:system-source-file
+                                 (asdf:find-system :beadwork))))))
+    (reduce #'max sources :key #'file-write-date)))
+
+(defun bw-binary ()
+  "Path to the bw executable under test.
+
+Refuses a missing or stale binary.  Grading a build older than the sources is
+the same class of false signal as a doctor that reports healthy without
+checking anything.  `make test` builds first; a focused `make test-eval` does
+not, so this check is what keeps that path honest."
+  (or *bw-binary-path*
+      (let ((bin (probe-file (merge-pathnames
+                              "bin/bw"
+                              (asdf:system-source-directory :beadwork)))))
+        (unless bin
+          (error "bin/bw not found. Run 'make build' (plain 'make test' does it first)."))
+        (when (> (bw-source-newest-write-date) (file-write-date bin))
+          (error "bin/bw is older than src/. Run 'make build' before the CLI tests."))
+        (setf *bw-binary-path* (namestring bin)))))
+
+(defun bw-scratch-root ()
+  "Create (once per run) the directory every child runs in."
+  (or *bw-scratch-root*
+      (setf *bw-scratch-root*
+            (ensure-directories-exist
+             (merge-pathnames
+              (make-pathname :directory (list :relative
+                                              (format nil "bw-cli-~D-~D"
+                                                      (get-universal-time)
+                                                      (random 100000))))
+              (uiop:temporary-directory))))))
+
+(defun bw-case-dir (&optional (label "case"))
+  "Return a fresh directory for one case, named after LABEL.
+
+The trailing slash matters: the CLI merges \"beads.db\" and \"issues.jsonl\"
+onto a directory pathname, so the namestring must already read as a directory."
+  (incf *bw-case-counter*)
+  (namestring
+   (ensure-directories-exist
+    (merge-pathnames
+     (make-pathname :directory (list :relative
+                                     (format nil "~A-~D" label *bw-case-counter*)))
+     (bw-scratch-root)))))
+
+(defun run-bw (args &key db input)
+  "Run bin/bw with ARGS; return (values STDOUT STDERR EXIT-CODE).
+
+DB, when given, is passed as --db and is the only database the command can
+touch.  INPUT is fed to the child's stdin (the delete prompt reads it).
+
+The argv is passed as a list, so UIOP execs the binary directly -- no shell,
+no quoting, and an argument with a space stays one argument."
+  (let* ((db (or db (bw-case-dir "db")))
+         (argv (append (list (bw-binary)) args (list "--db" db))))
+    (uiop:run-program argv
+                      :output :string
+                      :error-output :string
+                      :input (make-string-input-stream (or input ""))
+                      :directory (bw-scratch-root)
+                      :ignore-error-status t)))
+
+(defun bw-json (text)
+  "Parse the CLI's JSON output (object -> hash-table, array -> vector)."
+  (com.inuoe.jzon:parse text))
+
+(defun json-ids (array)
+  "The id of every object in a JSON array, in order."
+  (map 'list (lambda (ht) (gethash "id" ht)) array))
+
+(defun create-bw-issue (title &key (repo "beadwork") type priority db)
+  "Create an issue through the CLI and return its id, asserting success."
+  (multiple-value-bind (out err code)
+      (run-bw (append (list "create" "-t" title "--repo" repo "--format" "json")
+                      (when type (list "-T" type))
+                      (when priority (list "-p" priority)))
+              :db db)
+    (declare (ignore err))
+    (is = 0 code "create ~S should succeed" title)
+    (gethash "id" (bw-json out))))
+
+(defun write-status-doc (dir &rest lines)
+  "Write a parseable status doc into DIR (a digit-prefixed name is required)."
+  (let ((path (merge-pathnames "20260101T0000-doc.md" dir)))
+    (with-open-file (out path :direction :output :if-exists :supersede)
+      (dolist (line lines) (write-line line out)))
+    (namestring path)))
+
+;;; ---------------------------------------------------------------------------
+;;; Top level: version, help, unknown command
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-version-help-and-unknown-command
+  :parent cli-suite
+  (multiple-value-bind (out err code) (run-bw '("--version"))
+    (declare (ignore err))
+    (is = 0 code)
+    (true (search "bw version" out)))
+  (multiple-value-bind (out err code) (run-bw '("--help"))
+    (declare (ignore err))
+    (is = 0 code)
+    (true (search "COMMANDS:" out))
+    (true (search "doctor" out)))
+  (multiple-value-bind (out err code) (run-bw '("definitely-not-a-command"))
+    (declare (ignore out err))
+    (is = 64 code "an unknown command is a usage error, not a silent success")))
+
+;;; ---------------------------------------------------------------------------
+;;; create / show
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-create-then-show-roundtrips-every-field
+  :parent cli-suite
+  (let* ((db (bw-case-dir "roundtrip"))
+         (id (create-bw-issue "Roundtrip issue" :db db :type "bug" :priority "P1")))
+    (true id)
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((issue (bw-json out)))
+        (is equal id (gethash "id" issue))
+        (is equal "Roundtrip issue" (gethash "title" issue))
+        (is equal "bug" (gethash "issue-type" issue))
+        (is = 1 (gethash "priority" issue))
+        (is equal "open" (gethash "status" issue))
+        (is equal "beadwork" (gethash "source-repo" issue))))))
+
+(define-test cli-create-without-repo-fails-with-a-usable-message
+  :parent cli-suite
+  (let ((db (bw-case-dir "norepo")))
+    (multiple-value-bind (out err code)
+        (run-bw '("create" "-t" "Homeless") :db db)
+      (declare (ignore out))
+      (is = 1 code)
+      (true (search "--repo is required" err)))
+    (multiple-value-bind (out err code)
+        (run-bw '("list" "--format" "json" "--all-repos") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is = 0 (length (bw-json out))))))
+
+(define-test cli-create-child-gets-a-dotted-id-and-the-parent-link
+  :parent cli-suite
+  (let* ((db (bw-case-dir "child"))
+         (parent (create-bw-issue "Epic" :db db :type "epic"))
+         (child-id (format nil "~A.1" parent)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "create" "-t" "Child" "--parent" parent "--format" "json")
+                :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal child-id (gethash "id" (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" child-id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((child (bw-json out)))
+        (is equal parent (gethash "parent" child))
+        (is equal "beadwork" (gethash "source-repo" child))))))
+
+(define-test cli-show-missing-issue-exits-nonzero
+  :parent cli-suite
+  (let ((db (bw-case-dir "missing")))
+    (multiple-value-bind (out err code)
+        (run-bw '("show" "bd-nope" "--format" "json") :db db)
+      (declare (ignore out))
+      (is = 1 code)
+      (true (search "not found" err)))))
+
+;;; ---------------------------------------------------------------------------
+;;; list / ready / blocked
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-list-filters-by-repo-and-names-its-scope
+  :parent cli-suite
+  (let ((db (bw-case-dir "list")))
+    (create-bw-issue "Alpha work" :db db :repo "alpha-repo")
+    (create-bw-issue "Beta work" :db db :repo "beta-repo")
+    (multiple-value-bind (out err code)
+        (run-bw '("list" "--format" "json" "--all-repos") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is = 2 (length (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw '("list" "--repo" "alpha-repo" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is = 1 (length (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw '("list" "--repo" "alpha-repo" "--plain") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "alpha-repo" out))
+      (true (search "1 issue(s)" out))
+      (true (search "--all-repos" out))
+      (false (search "Beta work" out)))))
+
+(define-test cli-ready-hides-issues-with-an-open-blocker
+  :parent cli-suite
+  (let* ((db (bw-case-dir "ready"))
+         (blocker (create-bw-issue "Blocker" :db db))
+         (dependent (create-bw-issue "Dependent" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "dep" "add" dependent blocker) :db db)
+      (declare (ignore out err))
+      (is = 0 code))
+    (multiple-value-bind (out err code)
+        (run-bw '("ready" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal (list blocker) (json-ids (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw '("blocked" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal (list dependent) (json-ids (bw-json out))))))
+
+;;; ---------------------------------------------------------------------------
+;;; update / close / reopen
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-update-changes-title-status-and-priority
+  :parent cli-suite
+  (let* ((db (bw-case-dir "update"))
+         (id (create-bw-issue "Before" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "update" id "-t" "After" "--status" "in_progress"
+                      "--priority" "P0")
+                :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Updated" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((issue (bw-json out)))
+        (is equal "After" (gethash "title" issue))
+        (is equal "in-progress" (gethash "status" issue))
+        (is = 0 (gethash "priority" issue))))))
+
+(define-test cli-close-needs-a-reason-and-reopen-undoes-it
+  :parent cli-suite
+  (let* ((db (bw-case-dir "close"))
+         (id (create-bw-issue "Closable" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "close" id) :db db)
+      (declare (ignore out))
+      (is = 1 code "closing without a reason must be refused")
+      (true (search "close reason required" err)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "close" id "-r" "finished it") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Closed" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((issue (bw-json out)))
+        (is equal "closed" (gethash "status" issue))
+        (is equal "finished it" (gethash "close-reason" issue))
+        (true (stringp (gethash "closed-at" issue)))))
+    (multiple-value-bind (out err code)
+        (run-bw (list "reopen" id) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Reopened" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((issue (bw-json out)))
+        (is equal "open" (gethash "status" issue))
+        (false (gethash "closed-at" issue))))))
+
+;;; ---------------------------------------------------------------------------
+;;; dep / label / comment
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-dep-add-list-and-remove
+  :parent cli-suite
+  (let* ((db (bw-case-dir "dep"))
+         (blocker (create-bw-issue "Blocker" :db db))
+         (dependent (create-bw-issue "Dependent" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "dep" "add" dependent blocker) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Added dependency" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "dep" "list" dependent) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search blocker out))
+      (true (search "blocks" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "dep" "remove" dependent blocker) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Removed dependency" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "dep" "list" dependent) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (false (search blocker out)))))
+
+(define-test cli-label-add-list-and-remove
+  :parent cli-suite
+  (let* ((db (bw-case-dir "label"))
+         (id (create-bw-issue "Labelled" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "label" "add" id "needs-review") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "needs-review" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "label" "list" id) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "needs-review" out)))
+    (multiple-value-bind (out err code)
+        (run-bw '("label" "list") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "needs-review" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "label" "remove" id "needs-review") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Removed label" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "label" "list" id) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (false (search "needs-review" out)))))
+
+(define-test cli-comment-add-and-list
+  :parent cli-suite
+  (let* ((db (bw-case-dir "comment"))
+         (id (create-bw-issue "Commented" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "comment" "add" id "first thought") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Added comment" out)))
+    ;; Text form: this command's JSON form is still an array of arrays rather
+    ;; than objects (filed separately), so that shape is not asserted here.
+    (multiple-value-bind (out err code)
+        (run-bw (list "comment" "list" id) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "first thought" out))
+      (true (search "[cli]" out)))))
+
+;;; ---------------------------------------------------------------------------
+;;; search / stats / delete
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-search-matches-title-substring
+  :parent cli-suite
+  (let ((db (bw-case-dir "search")))
+    (let ((hit (create-bw-issue "Needle in a haystack" :db db)))
+      (create-bw-issue "Unrelated issue" :db db)
+      (multiple-value-bind (out err code)
+          (run-bw '("search" "Needle" "--format" "json") :db db)
+        (declare (ignore err))
+        (is = 0 code)
+        (is equal (list hit) (json-ids (bw-json out)))))))
+
+(define-test cli-stats-json-counts
+  :parent cli-suite
+  (let ((db (bw-case-dir "stats")))
+    (create-bw-issue "One" :db db :type "bug")
+    (create-bw-issue "Two" :db db)
+    (multiple-value-bind (out err code)
+        (run-bw '("stats" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let* ((stats (bw-json out))
+             (by-status (gethash "counts-by-status" stats))
+             (by-type (gethash "counts-by-type" stats)))
+        (is = 2 (gethash "total" stats))
+        (is = 2 (gethash "open" by-status))
+        (is = 1 (gethash "bug" by-type))
+        (is = 1 (gethash "task" by-type))))))
+
+(define-test cli-delete-cancels-without-force-and-deletes-with-it
+  :parent cli-suite
+  (let* ((db (bw-case-dir "delete"))
+         (id (create-bw-issue "Deletable" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "delete" id) :db db :input (format nil "n~%"))
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Cancelled" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore out err))
+      (is = 0 code "a cancelled delete must leave the issue in place"))
+    (multiple-value-bind (out err code)
+        (run-bw (list "delete" id "-f") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Deleted" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore out err))
+      (is = 1 code))))
+
+;;; ---------------------------------------------------------------------------
+;;; init / sync
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-init-creates-a-beads-directory
+  :parent cli-suite
+  (let* ((db (bw-case-dir "init"))
+         (target (namestring (ensure-directories-exist
+                              (merge-pathnames "proj/" db)))))
+    (multiple-value-bind (out err code)
+        (run-bw (list "init" "--path" target) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Initialized" out)))
+    (true (probe-file (merge-pathnames "proj/.beads/beads.db" db)))
+    (true (probe-file (merge-pathnames "proj/.beads/config.yaml" db)))
+    (true (probe-file (merge-pathnames "proj/.beads/.gitignore" db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "init" "--path" target) :db db)
+      (declare (ignore out))
+      (is = 1 code)
+      (true (search "already exists" err)))))
+
+(define-test cli-sync-export-writes-issues-jsonl
+  :parent cli-suite
+  (let* ((db (bw-case-dir "sync"))
+         (id (create-bw-issue "Exported issue" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw '("sync" "--direction" "export") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Exported to" out)))
+    (let ((jsonl (merge-pathnames "issues.jsonl" db)))
+      (true (probe-file jsonl))
+      (true (search id (uiop:read-file-string jsonl))))))
+
+;;; ---------------------------------------------------------------------------
+;;; session
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-session-lifecycle
+  :parent cli-suite
+  (let* ((db (bw-case-dir "session"))
+         (id (create-bw-issue "Session work" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "status") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "No active session" out)))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "start" "--agent-id" "cli-test") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "started" out))
+      (true (search "cli-test" out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "session" "work" id) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search id out)))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "action" "investigating the thing") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Action recorded" out)))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "status" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let ((status (bw-json out)))
+        (is equal id (gethash "active-issue-id" status))
+        (is equal "cli-test" (gethash "agent-id" status))
+        (is equal "investigating the thing" (gethash "last-action" status))
+        (true (stringp (gethash "session-id" status)))))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "end" "--notes" "handoff text") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "ended" out)))
+    (multiple-value-bind (out err code)
+        (run-bw '("session" "list" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let* ((sessions (bw-json out))
+             (latest (aref sessions 0)))
+        (is = 1 (length sessions))
+        (is equal "ended" (gethash "state" latest))
+        (is equal "handoff text" (gethash "handoff-notes" latest))))))
+
+;;; ---------------------------------------------------------------------------
+;;; batch / doctor
+;;; ---------------------------------------------------------------------------
+
+(define-test cli-batch-creates-a-parent-and-its-child
+  :parent cli-suite
+  (let* ((db (bw-case-dir "batch"))
+         (payload (merge-pathnames "payload.json" db)))
+    (with-open-file (out payload :direction :output :if-exists :supersede)
+      (write-line "{\"operations\":[{\"op\":\"create\",\"ref\":\"epic\",\"title\":\"Batched epic\",\"type\":\"epic\",\"repo\":\"beadwork\",\"children\":[{\"op\":\"create\",\"ref\":\"kid\",\"title\":\"Batched kid\",\"type\":\"task\",\"repo\":\"beadwork\"}]}]}"
+                  out))
+    (multiple-value-bind (out err code)
+        (run-bw (list "batch" "--file" (namestring payload)) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is eq t (gethash "ok" (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw '("list" "--format" "json" "--all-repos") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let* ((issues (bw-json out))
+             (find-by-title (lambda (title)
+                              (find title issues
+                                    :test #'equal
+                                    :key (lambda (i) (gethash "title" i))))))
+        (is = 2 (length issues))
+        (let ((epic (funcall find-by-title "Batched epic"))
+              (kid (funcall find-by-title "Batched kid")))
+          (true epic)
+          (true kid)
+          (is equal (gethash "id" epic) (gethash "parent" kid)))))))
+
+(define-test cli-doctor-unscoped-exit-code-tracks-the-dot-bucket
+  :parent cli-suite
+  (let ((db (bw-case-dir "doctor")))
+    (create-bw-issue "Scoped issue" :db db)
+    (multiple-value-bind (out err code)
+        (run-bw '("doctor" "unscoped" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is = 0 (gethash "count" (bw-json out))))
+    (create-bw-issue "Unscoped issue" :db db :repo ".")
+    (multiple-value-bind (out err code)
+        (run-bw '("doctor" "unscoped" "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 1 code "a non-empty . bucket is a failure for this subcommand")
+      (is = 1 (gethash "count" (bw-json out))))))
+
+(define-test cli-doctor-classifies-a-closed-dotted-child
+  :parent cli-suite
+  "bd-r8v end-to-end: the closed child is STALE, not hidden by its open epic."
+  (let* ((db (bw-case-dir "doctor-dotted"))
+         (epic (create-bw-issue "Open epic" :db db :type "epic"))
+         (child (format nil "~A.1" epic)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "create" "-t" "Child" "--parent" epic) :db db)
+      (declare (ignore out err))
+      (is = 0 code))
+    (multiple-value-bind (out err code)
+        (run-bw (list "close" child "-r" "child done") :db db)
+      (declare (ignore out err))
+      (is = 0 code))
+    (write-status-doc db
+                      "<!-- bw:whats-next -->"
+                      "## What's Next"
+                      ""
+                      (format nil "1. Continue the plan (~A)" child))
+    (multiple-value-bind (out err code)
+        (run-bw (list "doctor" "--status-dir" db) :db db)
+      (declare (ignore err))
+      (is = 1 code "a closed child behind an open epic is not healthy")
+      (true (search "STALE" out))
+      (true (search child out)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "doctor" "--status-dir" db "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 1 code)
+      (let* ((result (bw-json out))
+             (finding (aref (gethash "findings" result) 0)))
+        (is equal "STALE" (gethash "status" finding))
+        (is equal child (gethash "id" finding))))))
