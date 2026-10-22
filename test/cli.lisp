@@ -199,6 +199,19 @@ agents parsing `bw list --format json` break when the result set is empty."
     (is = 10 (gethash "duration-minutes" ht))
     (is equal "bd-abc" (gethash "active-issue-id" ht))))
 
+(define-test cli-create-with-parent-json-reports-parent
+  :parent cli-suite
+  "bd-juc: the object create returns must name its parent, as show does."
+  (let* ((db (bw-case-dir "create-parent"))
+         (parent (create-bw-issue "Epic" :type "epic" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "create" "-t" "Kid" "--parent" parent
+                      "--repo" "beadwork" "--format" "json")
+                :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal parent (gethash "parent" (bw-json out))))))
+
 (define-test create-child-inherits-parent-repo
   :parent cli-suite
   "A child filed with --parent but no --repo stays on the parent's board."
@@ -619,14 +632,24 @@ no quoting, and an argument with a space stays one argument."
       (declare (ignore err))
       (is = 0 code)
       (true (search "Added comment" out)))
-    ;; Text form: this command's JSON form is still an array of arrays rather
-    ;; than objects (filed separately), so that shape is not asserted here.
+    ;; Text form.
     (multiple-value-bind (out err code)
         (run-bw (list "comment" "list" id) :db db)
       (declare (ignore err))
       (is = 0 code)
       (true (search "first thought" out))
-      (true (search "[cli]" out)))))
+      (true (search "[cli]" out)))
+    ;; JSON form: an array of objects, not an array of pairs (bd-ibg).
+    (multiple-value-bind (out err code)
+        (run-bw (list "comment" "list" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (let* ((comments (bw-json out))
+             (first (aref comments 0)))
+        (is = 1 (length comments))
+        (true (hash-table-p first))
+        (is equal "[cli]" (gethash "author" first))
+        (is equal "first thought" (gethash "body" first))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; search / stats / delete
@@ -689,9 +712,13 @@ no quoting, and an argument with a space stays one argument."
 
 (define-test cli-init-creates-a-beads-directory
   :parent cli-suite
+  ;; No trailing slash on --path: `bw init --path DIR` must still create
+  ;; DIR/.beads/ rather than merging DIR into the parent's .beads/ (bd-5t0).
   (let* ((db (bw-case-dir "init"))
-         (target (namestring (ensure-directories-exist
-                              (merge-pathnames "proj/" db)))))
+         (target (string-right-trim "/"
+                                    (namestring
+                                     (ensure-directories-exist
+                                      (merge-pathnames "proj/" db))))))
     (multiple-value-bind (out err code)
         (run-bw (list "init" "--path" target) :db db)
       (declare (ignore err))

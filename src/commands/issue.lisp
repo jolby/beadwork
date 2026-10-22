@@ -217,7 +217,10 @@ constraint (bd-193)."
         (add-dependency store (issue-id issue) blocks-on))
       (unless (eq *format* :json)
         (format t "Created ~A~%" (issue-id issue)))
-      (print-issue-single issue))))
+      ;; Pass STORE so the returned object carries the graph neighborhood,
+      ;; including the parent link written above; without it `create --parent`
+      ;; reported "parent": null while `show` reported the real id (bd-juc).
+      (print-issue-single issue store))))
 
 (defun create/command ()
   (clingon:make-command

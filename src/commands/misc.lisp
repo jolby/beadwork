@@ -103,9 +103,13 @@ failed; build hash-tables instead."
 ;;; ---------------------------------------------------------------------------
 
 (defun init/handler (cmd)
-  (let ((path (or (clingon:getopt cmd :path)
-                  (uiop:getcwd))))
-    (let ((beads-dir (merge-pathnames ".beads/" path)))
+  (let* ((path (or (clingon:getopt cmd :path)
+                   (uiop:getcwd)))
+         ;; --path may arrive without a trailing slash.  Normalize it first so
+         ;; merge-pathnames treats it as a directory instead of a file name
+         ;; (bd-5t0; resolve-db-path fixed the same class of bug for --db).
+         (dir (uiop:ensure-directory-pathname path)))
+    (let ((beads-dir (merge-pathnames ".beads/" dir)))
       (when (probe-file beads-dir)
         (format *error-output* "Error: .beads/ already exists at ~A~%" beads-dir)
         (clingon:exit 1))
