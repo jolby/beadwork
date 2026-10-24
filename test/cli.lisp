@@ -925,6 +925,52 @@ slash. The JSONL belongs beside beads.db, not in DIR's parent."
           (true kid)
           (is equal (gethash "id" epic) (gethash "parent" kid)))))))
 
+(define-test cli-batch-update-moves-an-issue-between-boards
+  :parent cli-suite
+  "End-to-end version of the bd-f81 triage: a batch update with a repo field
+re-boards an existing issue, and \"show\" then reports the new board."
+  (let* ((db (bw-case-dir "batch-move"))
+         (id (create-bw-issue "Misfiled issue" :db db :repo "beadwork"))
+         (payload (merge-pathnames "move.json" db)))
+    (with-open-file (out payload :direction :output :if-exists :supersede)
+      (format out "{\"operations\":[{\"op\":\"update\",\"id\":\"~A\",\"repo\":\"cogen-cli\"}]}~%" id))
+    (multiple-value-bind (out err code)
+        (run-bw (list "batch" "--file" (namestring payload)) :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is eq t (gethash "ok" (bw-json out))))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal "cogen-cli" (gethash "source-repo" (bw-json out))))))
+
+(define-test cli-help-states-what-repo-does-per-command
+  :parent cli-suite
+  "--repo is one option with two jobs: it SETS source_repo on create/update,
+provides the default for batch creates, and FILTERS on the read commands. The
+help line used to say 'Filter by source repository' everywhere, which reads as
+'a no-op when updating' and made an agent conclude bw could not set the field
+at all (bd-l3s)."
+  (flet ((help-of (command)
+           (multiple-value-bind (out err code)
+               (run-bw (list command "--help"))
+             (declare (ignore err))
+             (is = 0 code "bw ~A --help should succeed" command)
+             out)))
+    (true (search "Set the issue's source repository"
+                  (help-of "update"))
+          "update must say --repo sets the field")
+    (true (search "Set the issue's source repository"
+                  (help-of "create"))
+          "create must say --repo sets the field")
+    (true (search "Filter by source repository"
+                  (help-of "list"))
+          "list must keep saying --repo filters")
+    (true (search "Default source repository"
+                  (help-of "batch"))
+          "batch's --repo is the default for created issues")))
+
 (define-test cli-doctor-unscoped-exit-code-tracks-the-dot-bucket
   :parent cli-suite
   (let ((db (bw-case-dir "doctor")))

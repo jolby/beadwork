@@ -416,7 +416,7 @@ failed; build hash-tables instead."
 Payload is a JSON object with an 'operations' array. Each operation has an 'op' field:
   create: {\"op\":\"create\", \"title\":\"...\", \"type\":\"task|bug|feature|epic|chore|docs\",
            \"ref\":\"label\", \"priority\":\"P1-P4\", \"description\":\"...\", \"repo\":\"...\", \"children\":[...]}
-  update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", ...}
+  update: {\"op\":\"update\", \"id\":\"bd-xxx\", \"title\":\"...\", \"status\":\"...\", \"repo\":\"...\", ...}
   link:   {\"op\":\"link\", \"source\":{\"ref\":\"x\"},\"target\":{\"ref\":\"y\"|\"id\":\"bd-xxx\"}, \"relation\":\"blocks|...\"}
           DIRECTION: source depends on target. A blocks link means source is
           BLOCKED BY target; parent-child makes source a child of target.
@@ -427,5 +427,5 @@ work: a bare id string (\"bd-xxx\") or an object ({\"ref\":\"label\"} / {\"id\":
 A failing op is reported as 'operation N (op-type): ...' so a mixed batch is
 debuggable without bisecting the operations array.
 Use --example to print a complete example payload."
-   :options (append (batch/options) (global-options))
+   :options (append (batch/options) (global-options :repo-role :default))
    :handler #'batch/handler))

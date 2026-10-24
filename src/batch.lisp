@@ -201,7 +201,11 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
         id))))
 
 (defun %batch-update (store op result-array)
-  "Handle an update operation.  ID accepts a bare id string or a {ref|id} object."
+  "Handle an update operation.  ID accepts a bare id string or a {ref|id} object.
+
+A per-op \"repo\" field moves the issue to that board, the counterpart of
+create's repo field (bd-l3s).  Omitting it leaves source_repo untouched, so an
+ordinary status update never clobbers the board the issue was filed on."
   (let* ((id (%resolve-issue-ref (%batch-get-required op "id" :type :any)
                                  :field "update id"))
          (title (%batch-get-string op "title"))
@@ -210,7 +214,8 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
          (priority-str (%batch-get-string op "priority"))
          (priority (when priority-str (parse-priority priority-str)))
          (description (%batch-get-string op "description"))
-         (assignee (%batch-get-string op "assignee")))
+         (assignee (%batch-get-string op "assignee"))
+         (source-repo (%batch-get-string op "repo")))
     ;; Verify issue exists
     (get-issue store id)
     ;; Update
@@ -219,7 +224,8 @@ SOURCE-REPO is the default attribution; a per-op \"repo\" field overrides it."
                    :status status
                    :priority priority
                    :description description
-                   :assignee assignee)))
+                   :assignee assignee
+                   :source-repo source-repo)))
       (declare (ignore issue))
       (let ((result-ht (make-hash-table :test #'equal)))
         (setf (gethash "op" result-ht) "update")
@@ -368,7 +374,8 @@ array.  INDEX is the zero-based position; OP-TYPE is the op's type string."
   "Process a batch of operations encoded as JSON.
 STORE is a beadwork store instance.
 SOURCE-REPO is the default source repository for create ops (a per-op
-\"repo\" field overrides it).  NIL leaves create-issue's own default.
+\"repo\" field overrides it); an update op's \"repo\" field moves that issue to
+the named board.  NIL leaves create-issue's own default.
 JSON-STRING is the JSON payload with an \"operations\" array.
 IDEMPOTENCY-KEY, if given, enables idempotent replay -- retrying the same key
 returns the cached result instead of re-executing.

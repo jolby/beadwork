@@ -421,8 +421,15 @@ includes them."
 ;;; Global Options
 ;;; ---------------------------------------------------------------------------
 
-(defun global-options ()
-  "Global options available to all commands."
+(defun global-options (&key (repo-role :filter))
+  "Global options available to all commands.
+
+REPO-ROLE says what --repo does in this command, because it is one option with
+three jobs: :FILTER (the default) narrows list/ready/show, :SETTER writes the
+issue's source repo (create/update), and :DEFAULT supplies the fallback board
+for issues a batch creates.  A single 'Filter by source repository' line on
+create/update reads as 'a no-op here' and hid the fact that bw can set the
+field at all (bd-l3s)."
   (list
    (clingon:make-option
     :choice
@@ -444,7 +451,13 @@ includes them."
    (clingon:make-option
     :list
     :long-name "repo"
-    :description "Filter by source repository. May be specified multiple times (e.g. --repo csct --repo beadwork)"
+    :description (ecase repo-role
+                   (:filter
+                    "Filter by source repository. May be specified multiple times (e.g. --repo csct --repo beadwork)")
+                   (:setter
+                    "Set the issue's source repository (e.g. --repo cogen-cli)")
+                   (:default
+                    "Default source repository for issues this batch creates (a per-op \"repo\" field wins)"))
     :key :source-repo)
    (clingon:make-option
     :boolean/true

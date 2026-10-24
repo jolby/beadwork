@@ -296,6 +296,44 @@ their own \"repo\" field."
            (result (run-batch store json)))
       (false (batch-result-ok-p result)))))
 
+(define-test batch-update-op-sets-source-repo
+  :parent batch-suite
+  "A batch update op accepts a \"repo\" field and moves the issue to that
+board, the same way the create op does (bd-l3s). Before this fix a payload
+with \"repo\" on an update op silently left source_repo unchanged."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store
+                                            :title "Filed in the wrong repo"
+                                            :type :task
+                                            :source-repo "old-repo"))
+           (existing-id (beadwork:issue-id existing))
+           (json (format nil "{\"operations\":[{\"op\":\"update\",\"id\":\"~A\",\"repo\":\"cogen-cli\"}]}"
+                         existing-id))
+           (result (run-batch store json)))
+      (true (batch-result-ok-p result))
+      (let ((issue (beadwork:get-issue store existing-id)))
+        (is equal "cogen-cli" (beadwork:issue-source-repo issue))
+        (is equal "Filed in the wrong repo" (beadwork:issue-title issue)
+            "moving an issue must not touch the other fields")))))
+
+(define-test batch-update-without-repo-keeps-source-repo
+  :parent batch-suite
+  "An update op with no \"repo\" field leaves source_repo alone: the field is a
+move, not a default that clobbers the board on every touch (bd-l3s)."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((existing (beadwork:create-issue store
+                                            :title "Stay put"
+                                            :type :task
+                                            :source-repo "stays-here"))
+           (existing-id (beadwork:issue-id existing))
+           (json (format nil "{\"operations\":[{\"op\":\"update\",\"id\":\"~A\",\"status\":\"in_progress\"}]}"
+                         existing-id))
+           (result (run-batch store json)))
+      (true (batch-result-ok-p result))
+      (let ((issue (beadwork:get-issue store existing-id)))
+        (is equal "stays-here" (beadwork:issue-source-repo issue))
+        (is eq :in-progress (beadwork:issue-status issue))))))
+
 (define-test batch-update-to-closed-stamps-closed-at
   :parent batch-suite
   "batch update op with status closed must set closed_at, not trip the schema

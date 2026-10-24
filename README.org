@@ -95,9 +95,18 @@ inherits the parent's repo unless `--repo` says otherwise.
 bw update bd-123 -t "New title"
 bw update bd-123 --status in_progress
 bw update bd-123 -p P0
+bw update bd-123 --repo cogen-cli                # move it to another board
 bw update bd-123 -n "Replacement notes"         # replaces the notes field
 bw update bd-123 --append-notes "More evidence" # keeps the existing notes
 #+end_src
+
+`--repo` has two jobs depending on the command: on =create= and =update= it
+**sets** the issue's source repo, on =list=, =ready=, =show= and the other read
+commands it **filters** by it. The help text says which one applies. Omit it on
+=update= and the board stays as it was.
+
+=update= and =batch= can move an issue between boards; that is how an unscoped
+or misfiled issue gets fixed without touching its status.
 
 **Close/reopen issues:**
 
@@ -157,6 +166,11 @@ bw batch --file /tmp/batch.json --dry-run  # validate + simulate, then roll back
 
 =--dry-run= runs the whole batch in a transaction and rolls it back: nothing
 is persisted and the idempotency key is neither read nor written.
+
+Each =create= op takes a =repo= field; =--repo= on the command line is the
+default for ops that omit it. Each =update= op takes one too, and there it
+*moves* the issue to that board -- batch is the way to rescope a dozen issues
+in one transaction.
 
 **Labels:**
 

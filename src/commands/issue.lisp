@@ -227,7 +227,7 @@ constraint (bd-193)."
    :name "create"
    :description "Create a new issue"
    :aliases '("new" "c")
-   :options (append (create/options) (global-options))
+   :options (append (create/options) (global-options :repo-role :setter))
    :handler #'create/handler))
 
 ;;; ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ constraint (bd-193)."
    :name "update"
    :description "Update an issue"
    :aliases '("u")
-   :options (append (update/options) (global-options))
+   :options (append (update/options) (global-options :repo-role :setter))
    :handler #'update/handler
    :usage "<issue-id>"))
 
