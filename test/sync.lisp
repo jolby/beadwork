@@ -103,3 +103,100 @@ instead of silently dropping it."
           ;; issue-to-json-object omits nil timestamps, so the field is either
           ;; absent or JSON null -- either way the value is gone.
           (true (or (not present) (eq 'null value))))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Comments in JSONL (bd-pkv)
+;;; ---------------------------------------------------------------------------
+
+(define-test sync-export-includes-comments
+  :parent beadwork-suite
+  "bd-pkv: comments are durable evidence, so they must travel in issues.jsonl
+as the same comments array br uses."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Comment export" :type :task))
+           (id (beadwork:issue-id issue))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (beadwork:add-comment store id "agent-7" "measured evidence")
+      (beadwork::export-jsonl store path)
+      (let* ((line (with-open-file (in path) (read-line in)))
+             (ht (com.inuoe.jzon:parse line))
+             (comments (gethash "comments" ht)))
+        (is = 1 (length comments))
+        (let ((comment (aref comments 0)))
+          (is equal id (gethash "issue_id" comment))
+          (is equal "agent-7" (gethash "author" comment))
+          (is equal "measured evidence" (gethash "text" comment))
+          (true (gethash "created_at" comment)))))))
+
+(define-test sync-export-omits-empty-comments
+  :parent beadwork-suite
+  "An issue with no comments keeps the key out of JSONL, matching br's
+skip_serializing_if behavior."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "No comments" :type :task))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (declare (ignore issue))
+      (beadwork::export-jsonl store path)
+      (let* ((line (with-open-file (in path) (read-line in)))
+             (ht (com.inuoe.jzon:parse line)))
+        (is eq nil (nth-value 1 (gethash "comments" ht)))))))
+
+(define-test sync-import-restores-comments
+  :parent beadwork-suite
+  "A fresh clone can reconstruct comments from issues.jsonl."
+  (beadwork:with-store (source ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue source :title "Round trip" :type :task))
+           (id (beadwork:issue-id issue))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (beadwork:add-comment source id "agent-7" "survives the clone")
+      (beadwork::export-jsonl source path)
+      (beadwork:with-store (dest ":memory:" :prefix "bd")
+        (beadwork::import-jsonl dest path)
+        (let ((comments (beadwork:list-comments dest id)))
+          (is = 1 (length comments))
+          (let ((comment (first comments)))
+            (is equal "agent-7" (beadwork::comment-author comment))
+            (is equal "survives the clone" (beadwork::comment-body comment))))))))
+
+(define-test sync-import-comments-is-idempotent
+  :parent beadwork-suite
+  "Importing the same JSONL twice must not duplicate comments."
+  (beadwork:with-store (source ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue source :title "Idempotent" :type :task))
+           (id (beadwork:issue-id issue))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (beadwork:add-comment source id "agent-7" "once")
+      (beadwork::export-jsonl source path)
+      (beadwork:with-store (dest ":memory:" :prefix "bd")
+        (beadwork::import-jsonl dest path)
+        (beadwork::import-jsonl dest path)
+        (is = 1 (length (beadwork:list-comments dest id)))))))
+
+(define-test sync-import-comment-id-collision-does-not-clobber
+  :parent beadwork-suite
+  "An id already owned by another issue must not overwrite that comment."
+  (beadwork:with-store (source ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue source :title "Source issue" :type :task))
+           (id (beadwork:issue-id issue))
+           (path (uiop:with-temporary-file (:pathname p :type "jsonl")
+                     (namestring p))))
+      (beadwork:add-comment source id "source-author" "source comment")
+      (beadwork::export-jsonl source path)
+      (beadwork:with-store (dest ":memory:" :prefix "bd")
+        (let* ((local (beadwork:create-issue dest :title "Local issue" :type :task))
+               (local-id (beadwork:issue-id local)))
+          (beadwork:add-comment dest local-id "local-author" "local comment")
+          (beadwork::import-jsonl dest path)
+          (beadwork::import-jsonl dest path)
+          (let ((local-comments (beadwork:list-comments dest local-id))
+                (source-comments (beadwork:list-comments dest id)))
+            (is = 1 (length local-comments))
+            (is equal "local comment"
+                    (beadwork::comment-body (first local-comments)))
+            (is = 1 (length source-comments))
+            (is equal "source comment"
+                    (beadwork::comment-body (first source-comments)))))))))

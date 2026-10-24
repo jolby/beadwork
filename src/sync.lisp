@@ -34,10 +34,21 @@ Matches br's serde omitempty behavior."
     (setf (gethash "thread_id" ht) (or (dependency-thread-id dep) ""))
     ht))
 
-(defun issue-to-json-object (issue &key labels dependencies)
+(defun comment-to-json-object (comment)
+  "Convert a comment object to a hash-table matching br's JSONL format."
+  (let ((ht (make-hash-table :test 'equal)))
+    (setf (gethash "id" ht) (comment-id comment))
+    (setf (gethash "issue_id" ht) (comment-issue-id comment))
+    (setf (gethash "author" ht) (or (comment-author comment) ""))
+    (setf (gethash "text" ht) (or (comment-body comment) ""))
+    (setf (gethash "created_at" ht) (format-timestamp-utc (comment-created-at comment)))
+    ht))
+
+(defun issue-to-json-object (issue &key labels dependencies comments)
   "Convert an issue CLOS object to a hash-table matching br's JSONL format.
 LABELS is a list of label strings. DEPENDENCIES is a list of dependency objects.
-Fields with nil/empty values are omitted (serde omitempty behavior)."
+COMMENTS is a list of comment objects. Fields with nil/empty values are omitted
+(serde omitempty behavior)."
   (let ((ht (make-hash-table :test 'equal)))
     ;; Required fields — always present
     (setf (gethash "id" ht) (issue-id issue))
@@ -83,6 +94,11 @@ Fields with nil/empty values are omitted (serde omitempty behavior)."
       (setf (gethash "dependencies" ht)
             (coerce (mapcar #'dependency-to-json-object dependencies) 'vector)))
 
+    ;; Comments — omit if empty (matching br behavior)
+    (when comments
+      (setf (gethash "comments" ht)
+            (coerce (mapcar #'comment-to-json-object comments) 'vector)))
+
     ht))
 
 ;;; ----------------------------------------------------------------------------
@@ -101,12 +117,29 @@ Fields with nil/empty values are omitted (serde omitempty behavior)."
     :metadata      (gethash "metadata" ht "{}")
     :thread-id     (gethash "thread_id" ht "")))
 
+(defun json-object-to-comment (ht &optional issue-id)
+  "Convert a parsed JSON hash-table to a comment object.
+ISSUE-ID, when supplied, wins over the record's redundant issue_id field."
+  (make-instance 'comment
+    :id (gethash "id" ht)
+    :issue-id (or issue-id (gethash "issue_id" ht))
+    :author (or (gethash "author" ht) "")
+    :body (or (gethash "text" ht) "")
+    :created-at (or (parse-timestamp (gethash "created_at" ht))
+                    (local-time:now))))
+
 (defun json-object-to-issue (ht)
   "Convert a parsed JSON hash-table back to an issue CLOS object.
-Dependencies are stored in the issue's dependencies slot."
+Dependencies and comments are stored in the issue's respective slots."
   (let* ((deps-raw (gethash "dependencies" ht))
          (deps (when deps-raw
                  (map 'list #'json-object-to-dependency deps-raw)))
+         (comments-raw (gethash "comments" ht))
+         (comments (when comments-raw
+                     (map 'list (lambda (comment-ht)
+                                  (json-object-to-comment
+                                   comment-ht (gethash "id" ht)))
+                          comments-raw)))
          (issue (make-instance 'issue
                   :id                  (gethash "id" ht)
                   :title               (gethash "title" ht)
@@ -134,7 +167,8 @@ Dependencies are stored in the issue's dependencies slot."
                   :source-repo         (gethash "source_repo" ht ".")
                   :external-ref        (gethash "external_ref" ht nil)
                   :content-hash        (gethash "content_hash" ht nil)
-                  :dependencies        deps)))
+                  :dependencies        deps
+                  :comments            comments)))
     issue))
 
 ;;; ----------------------------------------------------------------------------
@@ -252,9 +286,11 @@ value (bd-1j9)."
           (let* ((issue (%row-to-issue row))
                  (labels (%fetch-labels db (issue-id issue)))
                  (deps (%fetch-dependencies db (issue-id issue)))
+                 (comments (list-comments store (issue-id issue)))
                  (json-ht (issue-to-json-object issue
                                                 :labels labels
-                                                :dependencies deps)))
+                                                :dependencies deps
+                                                :comments comments)))
             (jzon:stringify json-ht :stream out :pretty nil)
             (terpri out))))
       ;; Clear dirty flags
@@ -310,10 +346,64 @@ value (bd-1j9)."
     (or (dependency-metadata dep) "{}")
     (or (dependency-thread-id dep) "")))
 
+(defun %insert-comment (db comment)
+  "Insert COMMENT without an explicit id, letting SQLite allocate one."
+  (sqlite:execute-non-query db
+    "INSERT INTO comments (issue_id, author, text, created_at)
+     VALUES (?, ?, ?, ?)"
+    (comment-issue-id comment)
+    (or (comment-author comment) "")
+    (or (comment-body comment) "")
+    (format-timestamp-utc (comment-created-at comment))))
+
+(defun %comment-row-matches-p (db comment)
+  "Return true when COMMENT's full identity is already stored."
+  (let ((rows (sqlite:execute-to-list db
+                "SELECT 1 FROM comments
+                 WHERE issue_id = ? AND author = ? AND text = ? AND created_at = ?
+                 LIMIT 1"
+                (comment-issue-id comment)
+                (or (comment-author comment) "")
+                (or (comment-body comment) "")
+                (format-timestamp-utc (comment-created-at comment)))))
+    (not (null rows))))
+
+(defun %import-comment (db comment)
+  "Import COMMENT idempotently, following br's comment-id collision policy.
+
+A free id is reused so a clone reconstructs comment identity. An id owned by
+another issue is never overwritten: the comment gets a fresh id unless the same
+comment is already present. A re-import of the same id for the same issue
+refreshes its fields rather than duplicating it."
+  (let ((id (comment-id comment)))
+    (if (and (integerp id) (plusp id))
+        (let ((owner (sqlite:execute-single db
+                         "SELECT issue_id FROM comments WHERE id = ?" id)))
+          (cond
+            ((null owner)
+             (sqlite:execute-non-query db
+               "INSERT INTO comments (id, issue_id, author, text, created_at)
+                VALUES (?, ?, ?, ?, ?)"
+               id (comment-issue-id comment)
+               (or (comment-author comment) "")
+               (or (comment-body comment) "")
+               (format-timestamp-utc (comment-created-at comment))))
+            ((string= owner (comment-issue-id comment))
+             (sqlite:execute-non-query db
+               "UPDATE comments SET author = ?, text = ?, created_at = ?
+                WHERE id = ?"
+               (or (comment-author comment) "")
+               (or (comment-body comment) "")
+               (format-timestamp-utc (comment-created-at comment))
+               id))
+            ((not (%comment-row-matches-p db comment))
+             (%insert-comment db comment))))
+        (%insert-comment db comment))))
+
 (defun import-jsonl (store path)
   "Import issues from a JSONL file at PATH into STORE.
 Each line is parsed as a JSON object and upserted (INSERT OR REPLACE).
-Embedded dependencies are also imported."
+Embedded dependencies and comments are also imported."
   (let ((db (store-db store))
         (path (pathname path))
         (count 0))
@@ -337,6 +427,9 @@ Embedded dependencies are also imported."
                      ;; Import embedded dependencies
                      (dolist (dep (issue-dependencies issue))
                        (%upsert-dependency db dep))
+                     ;; Import embedded comments
+                     (dolist (comment (issue-comments issue))
+                       (%import-comment db comment))
                      (incf count))))
       (sqlite:execute-non-query db "COMMIT"))
     count))

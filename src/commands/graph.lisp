@@ -181,18 +181,6 @@
    :handler #'comment-add/handler
    :usage "<issue-id> <text>"))
 
-(defun comment->cli-json (comment)
-  "Build the CLI JSON hash-table for COMMENT.
-
-A plist of pairs stringifies to a JSON array of arrays in jzon; consumers
-parse objects (bd-ibg, same class as bd-7b6)."
-  (let ((ht (make-hash-table :test #'equal)))
-    (setf (gethash "id" ht) (comment-id comment))
-    (setf (gethash "author" ht) (comment-author comment))
-    (setf (gethash "body" ht) (comment-body comment))
-    (setf (gethash "created-at" ht) (format-timestamp (comment-created-at comment)))
-    ht))
-
 (defun comment-list/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
          (*format* (parse-format format-val))

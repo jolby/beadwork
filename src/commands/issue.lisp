@@ -297,8 +297,13 @@ constraint (bd-193)."
     :string
     :short-name #\n
     :long-name "notes"
-    :description "New notes"
-    :key :notes)))
+    :description "Replace notes"
+    :key :notes)
+   (clingon:make-option
+    :string
+    :long-name "append-notes"
+    :description "Append to notes instead of replacing them"
+    :key :append-notes)))
 
 (defun update/handler (cmd)
   (let* ((format-val (clingon:getopt cmd :format))
@@ -317,6 +322,7 @@ constraint (bd-193)."
                       (parse-priority p)))
             (assignee (clingon:getopt cmd :assignee))
             (notes (clingon:getopt cmd :notes))
+            (append-notes (clingon:getopt cmd :append-notes))
             (repo-val (clingon:getopt cmd :source-repo))
             (source-repo (when repo-val (first repo-val))))
       (let ((issue (update-issue store id
@@ -326,10 +332,11 @@ constraint (bd-193)."
                                 :priority priority
                                 :assignee assignee
                                 :notes notes
+                                :append-notes append-notes
                                 :source-repo source-repo)))
         (unless (eq *format* :json)
           (format t "Updated ~A~%" (issue-id issue)))
-        (print-issue-single issue)))))
+        (print-issue-single issue store)))))
 
 (defun update/command ()
   (clingon:make-command
@@ -376,7 +383,7 @@ constraint (bd-193)."
     (let ((issue (close-issue store id :reason reason)))
       (unless (eq *format* :json)
         (format t "Closed ~A: ~A~%" (issue-id issue) reason))
-      (print-issue-single issue))))
+      (print-issue-single issue store))))
 
 (defun close/command ()
   (clingon:make-command
@@ -402,7 +409,7 @@ constraint (bd-193)."
     (let ((issue (reopen-issue store id)))
       (unless (eq *format* :json)
         (format t "Reopened ~A~%" (issue-id issue)))
-      (print-issue-single issue))))
+      (print-issue-single issue store))))
 
 (defun reopen/command ()
   (clingon:make-command
