@@ -817,6 +817,29 @@ notes and comments, never its parent's record."
       (true (probe-file jsonl))
       (true (search id (uiop:read-file-string jsonl))))))
 
+(define-test cli-sync-db-without-trailing-slash-stays-in-beads-dir
+  :parent cli-suite
+  "bd-a5u: --db DIR must treat DIR as a directory even when it has no trailing
+slash. The JSONL belongs beside beads.db, not in DIR's parent."
+  (let* ((db (string-right-trim
+              "/"
+              (namestring (merge-pathnames ".beads/"
+                                           (bw-case-dir "sync-noslash")))))
+         (dir (uiop:ensure-directory-pathname db))
+         (id (create-bw-issue "Exported without slash" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw '("sync" "--direction" "export") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Exported to" out)))
+    (let ((jsonl (merge-pathnames "issues.jsonl" dir))
+          (wrong (merge-pathnames
+                  "issues.jsonl"
+                  (uiop:pathname-parent-directory-pathname dir))))
+      (true (probe-file jsonl))
+      (true (search id (uiop:read-file-string jsonl)))
+      (false (probe-file wrong)))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; session
 ;;; ---------------------------------------------------------------------------
