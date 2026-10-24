@@ -146,7 +146,12 @@ failed; build hash-tables instead."
 
 (defun sync/handler (cmd)
   (let* ((store (ensure-store cmd))
-         (beads-dir (or (clingon:getopt* cmd :db-path) (find-beads-dir)))
+         ;; --db may arrive without a trailing slash.  Normalize it before
+         ;; merging the JSONL filename, or merge-pathnames treats ".beads" as
+         ;; a file name and writes into its parent (bd-a5u, same class as
+         ;; bd-5t0).
+         (beads-dir (uiop:ensure-directory-pathname
+                     (or (clingon:getopt* cmd :db-path) (find-beads-dir))))
          (direction (clingon:getopt cmd :direction)))
     (cond
       ((string-equal direction "export")
