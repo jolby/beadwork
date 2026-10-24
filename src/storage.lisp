@@ -372,15 +372,35 @@ written before validation existed) must not abort a listing or render (bd-wux)."
 ;;; Update Issue
 ;;; ---------------------------------------------------------------------------
 
+(defun %append-notes (existing addition)
+  "Append ADDITION to EXISTING notes with one blank line between them.
+An empty side contributes nothing, so appending to a bead with no notes does
+not create leading whitespace."
+  (cond
+    ((or (null existing) (zerop (length existing))) addition)
+    ((or (null addition) (zerop (length addition))) existing)
+    (t (format nil "~A~%~%~A" existing addition))))
+
 (defun update-issue (store id &key title status priority description assignee
-                                   notes owner issue-type close-reason source-repo)
+                                   notes append-notes owner issue-type
+                                   close-reason source-repo)
   "Update specified fields of issue ID. Returns the updated issue.
 Only non-NIL keyword arguments cause updates. Status transitions into a
 terminal state (:closed or :tombstone) stamp closed_at, and transitions out of
-one clear it, satisfying the schema CHECK constraint (bd-lu5)."
+one clear it, satisfying the schema CHECK constraint (bd-lu5).
+
+APPEND-NOTES adds to the existing notes instead of replacing them. Passing both
+ NOTES and APPEND-NOTES is ambiguous and signals BEADWORK-ERROR."
+  (when (and notes append-notes)
+    (error 'beadwork-error :message
+           "Cannot use notes and append-notes in the same update"))
   (let* ((db (store-db store))
          (now-str (format-timestamp (local-time:now)))
-         (current-status (issue-status (get-issue store id)))
+         (current (get-issue store id))
+         (current-status (issue-status current))
+         (notes (if append-notes
+                    (%append-notes (issue-notes current) append-notes)
+                    notes))
          (clauses nil)
          (params nil))
     (macrolet ((when-field (key column value)
@@ -722,11 +742,11 @@ child id (legacy data) is skipped rather than signalling (bd-wux)."
     (mark-dirty store issue-id)))
 
 (defun list-comments (store issue-id)
-  "Return a list of comment objects for ISSUE-ID, ordered by created_at."
+  "Return a list of comment objects for ISSUE-ID, ordered by created_at then id."
   (let ((rows (sqlite:execute-to-list
                (store-db store)
                "SELECT id, issue_id, author, text, created_at
-                FROM comments WHERE issue_id = ? ORDER BY created_at ASC"
+                FROM comments WHERE issue_id = ? ORDER BY created_at ASC, id ASC"
                issue-id)))
     (mapcar (lambda (row)
               (destructuring-bind (cid iid author body created-at) row

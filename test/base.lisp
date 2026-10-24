@@ -274,3 +274,23 @@ surfaced as a raw UNIQUE-constraint error."
     (let ((counts (getf (beadwork::issue-stats store) :counts-by-type)))
       (is = 1 (getf counts :question)
           "a :question issue must be counted, not dropped from the breakdown"))))
+
+(define-test update-issue-append-notes-preserves-existing
+  :parent beadwork-suite
+  "bd-pkv: appending evidence must not replace the notes already on the bead."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Append notes" :type :task))
+           (id (beadwork:issue-id issue)))
+      (beadwork:update-issue store id :notes "first block")
+      (beadwork:update-issue store id :append-notes "second block")
+      (is equal (format nil "first block~%~%second block")
+               (beadwork::issue-notes (beadwork:get-issue store id))))))
+
+(define-test update-issue-rejects-notes-and-append-notes
+  :parent beadwork-suite
+  "Passing both --notes and --append-notes is ambiguous and must fail loudly."
+  (beadwork:with-store (store ":memory:" :prefix "bd")
+    (let* ((issue (beadwork:create-issue store :title "Ambiguous notes" :type :task))
+           (id (beadwork:issue-id issue)))
+      (fail (beadwork:update-issue store id :notes "replace" :append-notes "append")
+            'beadwork:beadwork-error))))

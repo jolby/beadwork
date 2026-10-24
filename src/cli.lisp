@@ -219,10 +219,23 @@ the outgoing and incoming non parent-child edges."
     (list :parent parent :children children
           :dependencies dependencies :dependents dependents)))
 
-(defun issue->cli-json (issue &optional store)
+(defun comment->cli-json (comment)
+  "Build the CLI JSON hash-table for COMMENT.
+
+A plist of pairs stringifies to a JSON array of arrays in jzon; consumers
+parse objects."
+  (let ((ht (make-hash-table :test #'equal)))
+    (setf (gethash "id" ht) (comment-id comment))
+    (setf (gethash "author" ht) (comment-author comment))
+    (setf (gethash "body" ht) (comment-body comment))
+    (setf (gethash "created-at" ht) (format-timestamp (comment-created-at comment)))
+    ht))
+
+(defun issue->cli-json (issue &optional store &key include-comments)
   "Build the CLI JSON object for ISSUE.  When STORE is given, include the
 graph neighborhood: parent, children, dependencies (outgoing) and
-dependents (incoming)."
+dependents (incoming). When INCLUDE-COMMENTS is true, also include the
+issue's comments (single-issue views only; list views stay compact)."
   (let ((ht (make-hash-table :test #'equal)))
     (dolist (field (jzon:coerced-fields issue))
       (destructuring-bind (name value &optional type) field
@@ -244,6 +257,11 @@ dependents (incoming)."
               (coerce (mapcar (lambda (pair)
                                 (%issue-brief-json (cdr pair) (car pair)))
                               (getf neighbors :dependents))
+                      'vector)))
+      (when include-comments
+        (setf (gethash "comments" ht)
+              (coerce (mapcar #'comment->cli-json
+                              (list-comments store (issue-id issue)))
                       'vector))))
     ht))
 
@@ -342,12 +360,26 @@ the JSON form includes each issue's graph neighborhood."
                         (format-issue-rich issue
                                            id-w status-w pri-w type-w repo-w)))))))
 
+(defun print-issue-comments (store issue)
+  "Print ISSUE's comments when it has any."
+  (let ((comments (list-comments store (issue-id issue))))
+    (when comments
+      (format t "~%Comments (~D):~%" (length comments))
+      (dolist (comment comments)
+        (format t "  [~A] ~A~%  ~A~%"
+                (format-timestamp (comment-created-at comment))
+                (comment-author comment)
+                (comment-body comment))))))
+
 (defun print-issue-single (issue &optional store)
   "Print a single issue in detail.  When STORE is given, the plain/rich
-forms append the issue's graph neighborhood and the JSON form includes it."
+forms append the issue's comments and graph neighborhood, and the JSON form
+includes them."
   (ecase *format*
     (:json
-     (format t "~A" (jzon:stringify (issue->cli-json issue store) :pretty t)))
+     (format t "~A" (jzon:stringify (issue->cli-json issue store
+                                                   :include-comments t)
+                                     :pretty t)))
     (:plain
      (format t "ID: ~A~%" (issue-id issue))
      (format t "Title: ~A~%" (issue-title issue))
@@ -364,6 +396,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
                 (plusp (length (issue-notes issue))))
        (format t "~%Notes:~%  ~A~%" (issue-notes issue)))
      (when store
+       (print-issue-comments store issue)
        (print-issue-neighbors store issue)))
     (:rich
      (format t "ID: ~A~%" (issue-id issue))
@@ -381,6 +414,7 @@ forms append the issue's graph neighborhood and the JSON form includes it."
                 (plusp (length (issue-notes issue))))
        (format t "~%Notes:~%  ~A~%" (issue-notes issue)))
      (when store
+       (print-issue-comments store issue)
        (print-issue-neighbors store issue)))))
 
 ;;; ---------------------------------------------------------------------------

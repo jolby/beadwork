@@ -651,6 +651,77 @@ no quoting, and an argument with a space stays one argument."
         (is equal "[cli]" (gethash "author" first))
         (is equal "first thought" (gethash "body" first))))))
 
+(define-test cli-show-includes-comments
+  :parent cli-suite
+  "bd-pkv: show must surface comments instead of looking like the bead has none."
+  (let* ((db (bw-case-dir "show-comments"))
+         (id (create-bw-issue "Commented" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "comment" "add" id "visible evidence") :db db)
+      (declare (ignore err))
+      (is = 0 code))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err out))
+      (is = 0 code))
+    (let* ((out (nth-value 0 (run-bw (list "show" id "--format" "json") :db db)))
+           (comments (gethash "comments" (bw-json out))))
+      (is = 1 (length comments))
+      (is equal "visible evidence" (gethash "body" (aref comments 0))))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "plain") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (true (search "Comments (1)" out))
+      (true (search "visible evidence" out)))))
+
+(define-test cli-update-append-notes-keeps-existing
+  :parent cli-suite
+  "bd-pkv: --append-notes adds to the bead without destroying earlier evidence."
+  (let* ((db (bw-case-dir "append-notes"))
+         (id (create-bw-issue "Notes append" :db db)))
+    (multiple-value-bind (out err code)
+        (run-bw (list "update" id "-n" "first block") :db db)
+      (declare (ignore out err))
+      (is = 0 code))
+    (multiple-value-bind (out err code)
+        (run-bw (list "update" id "--append-notes" "second block") :db db)
+      (declare (ignore out err))
+      (is = 0 code))
+    (multiple-value-bind (out err code)
+        (run-bw (list "show" id "--format" "json") :db db)
+      (declare (ignore err))
+      (is = 0 code)
+      (is equal (format nil "first block~%~%second block")
+               (gethash "notes" (bw-json out))))))
+
+(define-test cli-show-child-does-not-return-parent
+  :parent cli-suite
+  "bd-pkv regression: showing a dotted child must return that child's own
+notes and comments, never its parent's record."
+  (let* ((db (bw-case-dir "show-child"))
+         (parent (create-bw-issue "Parent epic" :type "epic" :db db))
+         (child (gethash "id"
+                         (bw-json
+                          (nth-value 0
+                                     (run-bw (list "create" "-t" "Child task"
+                                                   "--parent" parent
+                                                   "--repo" "beadwork"
+                                                   "--format" "json")
+                                             :db db))))))
+    (run-bw (list "update" parent "-n" "PARENT NOTES") :db db)
+    (run-bw (list "update" child "-n" "CHILD NOTES") :db db)
+    (run-bw (list "comment" "add" parent "parent comment") :db db)
+    (run-bw (list "comment" "add" child "child comment") :db db)
+    (let* ((out (nth-value 0 (run-bw (list "show" child "--format" "json") :db db)))
+           (ht (bw-json out))
+           (comments (gethash "comments" ht)))
+      (is equal child (gethash "id" ht))
+      (is equal "CHILD NOTES" (gethash "notes" ht))
+      (is equal parent (gethash "parent" ht))
+      (is = 1 (length comments))
+      (is equal "child comment" (gethash "body" (aref comments 0))))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; search / stats / delete
 ;;; ---------------------------------------------------------------------------

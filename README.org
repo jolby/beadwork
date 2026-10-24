@@ -95,6 +95,8 @@ inherits the parent's repo unless `--repo` says otherwise.
 bw update bd-123 -t "New title"
 bw update bd-123 --status in_progress
 bw update bd-123 -p P0
+bw update bd-123 -n "Replacement notes"         # replaces the notes field
+bw update bd-123 --append-notes "More evidence" # keeps the existing notes
 #+end_src
 
 **Close/reopen issues:**
@@ -196,7 +198,11 @@ bw session show S-abc          # A specific session
 #+begin_src sh
 bw comment add bd-123 "Fixed the token refresh"
 bw comment list bd-123
+bw show bd-123                # Single-issue view also prints the comments
 #+end_src
+
+Comments are exported to =issues.jsonl= and imported back, so a comment is
+durable evidence, not a scratch note local to one machine.
 
 **Delete issues:**
 
@@ -290,6 +296,12 @@ beadwork/
 `.beads/issues.jsonl` is the durable, git-tracked record. =bw sync --direction
 export= is the only thing that copies one to the other, and nothing warns you
 when it is stale.
+
+The JSONL carries each issue's labels, dependencies, and comments. Comments use
+the same =comments= array as =br=: =id=, =issue_id=, =author=, =text=, and
+=created_at=. Import is additive for comments: it reconstructs missing ones and
+refreshes the same id, but never deletes a local comment that is absent from the
+file.
 
 End every session that writes issues with:
 
