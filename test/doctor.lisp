@@ -244,6 +244,31 @@
     (is = 1 (length rows))
     (is equal "bd-abc" (third (first rows)))))
 
+(define-test parse-whats-next-ignores-a-quoted-marker
+  :parent doctor-suite
+  "bd-ifb: a marker quoted inside prose does not arm the parser.
+
+The reproduction: a status doc's checklist bullet mentions the marker while
+describing the convention, and its own What's Next section sits at the end. The
+parser used to arm on the quotation, read the next bullet as a task, and return
+at the next heading — so the real section was never read and `bw doctor`
+reported an unrelated checklist line as an orphan."
+  (let* ((lines '("## Checklist"
+                  ""
+                  "- Write a status doc ending in a What's Next section marked"
+                  "  with <!-- bw:whats-next --> so doctor can read it."
+                  "- Close the issue before the doc."
+                  ""
+                  "## What's Next"
+                  ""
+                  "<!-- bw:whats-next -->"
+                  ""
+                  "1. Real next step (bd-abc)"
+                  ""))
+         (rows (beadwork::parse-whats-next-table lines)))
+    (is = 1 (length rows) "only the real section's row")
+    (is equal "bd-abc" (third (first rows)))))
+
 (define-test parse-whats-next-reports-found-p
   :parent doctor-suite
   "FOUND-P distinguishes 'no section' from 'section with nothing parseable'."
@@ -295,19 +320,28 @@
 (define-test doctor-resolves-prose-whats-next
   :parent doctor-suite
   "End-to-end: a status doc whose What's Next is prose is actually checked."
-  ;; find-latest-status-doc only considers digit-prefixed filenames.
-  (uiop:with-temporary-file (:pathname doc :type "md" :prefix "20260101T0000-")
-    (with-open-file (out doc :direction :output :if-exists :supersede)
-      (format out "<!-- bw:whats-next -->~%## What's Next~%")
-      (format out "~%Ship bd-abc next.~%"))
-    (let ((store (beadwork::open-store ":memory:"))
-          (status-dir (uiop:pathname-directory-pathname doc)))
-      (unwind-protect
-           (let ((result (beadwork::run-doctor-status-docs store status-dir)))
-             (true (getf result :checked))
-             (is = 1 (length (getf result :findings)))
-             (is eq :missing (getf (first (getf result :findings)) :status)))
-        (beadwork::close-store store)))))
+  ;; The doc lives in a private directory. FIND-LATEST-STATUS-DOC takes the
+  ;; highest-sorting *.md whose name starts with a digit, so one stray file in
+  ;; the shared temporary directory — a leftover `7m5-close.md` outranks every
+  ;; `2026...` name — silently decided which document this test read, and it
+  ;; failed with no change to the code.
+  (let ((dir (merge-pathnames "bw-doctor-prose-doc/" (uiop:temporary-directory)))
+        (doc-name "20260101T0000-prose.md"))
+    (ensure-directories-exist (merge-pathnames doc-name dir))
+    (unwind-protect
+         (progn
+           (with-open-file (out (merge-pathnames doc-name dir)
+                                :direction :output :if-exists :supersede)
+             (format out "<!-- bw:whats-next -->~%## What's Next~%")
+             (format out "~%Ship bd-abc next.~%"))
+           (let ((store (beadwork::open-store ":memory:")))
+             (unwind-protect
+                  (let ((result (beadwork::run-doctor-status-docs store dir)))
+                    (true (getf result :checked))
+                    (is = 1 (length (getf result :findings)))
+                    (is eq :missing (getf (first (getf result :findings)) :status)))
+               (beadwork::close-store store))))
+      (uiop:delete-directory-tree dir :validate t))))
 
 ;;; ============================================================================
 ;;; Dotted ids: exact match, ancestor fallback, missing (bd-r8v)

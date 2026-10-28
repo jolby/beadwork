@@ -114,8 +114,14 @@ orphans (bd-fs9)."
                (member state '(:armed :in-section))))
       (dolist (line lines)
         (cond
-          ;; Explicit marker
-          ((search "<!-- bw:whats-next -->" line)
+          ;; Explicit marker, and only when it is the whole line. A doc that
+          ;; quotes the marker in prose — a checklist bullet about conventions,
+          ;; say — used to arm the parser there, and the first bullet after the
+          ;; quotation won over the real section at the end (bd-ifb). Every real
+          ;; status doc puts the marker on a line of its own, so requiring that
+          ;; costs nothing and a quoted mention becomes what it is: text.
+          ((string= (string-trim '(#\Space #\Tab #\Return) line)
+                    "<!-- bw:whats-next -->")
            (setf state :armed found-p t))
           ;; End of the section: next heading of the same style
           ((and (eq state :in-section) (ends-section-p line))
